@@ -1,62 +1,62 @@
 /* Custom scrollbar styles for modal content */
 .scrollable-content {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(107, 114, 128, 0.5) transparent;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(107, 114, 128, 0.5) transparent;
 }
 
 .scrollable-content::-webkit-scrollbar {
-    width: 6px;
+  width: 6px;
 }
 
 .scrollable-content::-webkit-scrollbar-track {
-    background: transparent;
+  background: transparent;
 }
 
 .scrollable-content::-webkit-scrollbar-thumb {
-    background-color: rgba(107, 114, 128, 0.5);
-    border-radius: 3px;
+  background-color: rgba(107, 114, 128, 0.5);
+  border-radius: 3px;
 }
 
 .scrollable-content::-webkit-scrollbar-thumb:hover {
-    background-color: rgba(107, 114, 128, 0.7);
+  background-color: rgba(107, 114, 128, 0.7);
 }
 
 /* Fade effect for overflow content */
 .scroll-fade-top {
-    background: linear-gradient(to bottom, rgb(17, 24, 39), transparent);
-    height: 8px;
-    pointer-events: none;
+  background: linear-gradient(to bottom, rgb(17, 24, 39), transparent);
+  height: 8px;
+  pointer-events: none;
 }
 
 .scroll-fade-bottom {
-    background: linear-gradient(to top, rgb(17, 24, 39), transparent);
-    height: 8px;
-    pointer-events: none;
+  background: linear-gradient(to top, rgb(17, 24, 39), transparent);
+  height: 8px;
+  pointer-events: none;
 }
 
 /* Mobile responsive adjustments */
 @media (max-height: 700px) {
-    .modal-container {
-        max-height: 90vh;
-    }
+  .modal-container {
+    max-height: 90vh;
+  }
 }
 
 @media (max-height: 600px) {
-    .modal-container {
-        max-height: 95vh;
-    }
+  .modal-container {
+    max-height: 95vh;
+  }
 
-    .modal-header {
-        padding: 1rem 1.5rem;
-    }
+  .modal-header {
+    padding: 1rem 1.5rem;
+  }
 
-    .modal-content {
-        padding: 1rem 1.5rem;
-    }
+  .modal-content {
+    padding: 1rem 1.5rem;
+  }
 }
 
 @media (max-height: 500px) {
-    .modal-container {
-        max-height: 98vh;
-    }
+  .modal-container {
+    max-height: 98vh;
+  }
 }

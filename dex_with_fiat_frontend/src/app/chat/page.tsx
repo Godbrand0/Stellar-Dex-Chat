@@ -7,23 +7,23 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import StellarChatInterface from '@/components/StellarChatInterface';
 
 function ChatPageContent() {
-    const { isDarkMode } = useTheme();
+  const { isDarkMode } = useTheme();
 
-    return (
-        <main className="h-screen w-screen overflow-hidden">
-            <ErrorBoundary isDarkMode={isDarkMode}>
-                <StellarChatInterface />
-            </ErrorBoundary>
-        </main>
-    );
+  return (
+    <main className="h-screen w-screen overflow-hidden">
+      <ErrorBoundary isDarkMode={isDarkMode}>
+        <StellarChatInterface />
+      </ErrorBoundary>
+    </main>
+  );
 }
 
 export default function ChatPage() {
-    return (
-        <ThemeProvider>
-            <StellarWalletProvider>
-                <ChatPageContent />
-            </StellarWalletProvider>
-        </ThemeProvider>
-    );
+  return (
+    <ThemeProvider>
+      <StellarWalletProvider>
+        <ChatPageContent />
+      </StellarWalletProvider>
+    </ThemeProvider>
+  );
 }

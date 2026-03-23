@@ -1,20 +1,20 @@
-"use client";
+'use client';
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Loader2,
   CheckCircle,
   AlertCircle,
   ArrowDownUp,
-} from "lucide-react";
-import { useStellarWallet } from "@/contexts/StellarWalletContext";
+} from 'lucide-react';
+import { useStellarWallet } from '@/contexts/StellarWalletContext';
 import {
   depositToContract,
   withdrawFromContract,
   stroopsToDisplay,
-} from "@/lib/stellarContract";
-import SkeletonPayout from "@/components/ui/skeleton/SkeletonPayout";
+} from '@/lib/stellarContract';
+import SkeletonPayout from '@/components/ui/skeleton/SkeletonPayout';
 
 interface StellarFiatModalProps {
   isOpen: boolean;
@@ -24,14 +24,14 @@ interface StellarFiatModalProps {
   recipientAddress?: string;
 }
 
-type TxStatus = "idle" | "loading" | "success" | "error";
+type TxStatus = 'idle' | 'loading' | 'success' | 'error';
 
 export default function StellarFiatModal({
   isOpen,
   onClose,
-  defaultAmount = "",
+  defaultAmount = '',
   isAdminMode = false,
-  recipientAddress = "",
+  recipientAddress = '',
 }: StellarFiatModalProps) {
   const { connection, signTx } = useStellarWallet();
 
@@ -45,9 +45,9 @@ export default function StellarFiatModal({
     setAmount(String(value));
     setActivePreset(value);
   };
-  const [status, setStatus] = useState<TxStatus>("idle");
-  const [txHash, setTxHash] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
+  const [status, setStatus] = useState<TxStatus>('idle');
+  const [txHash, setTxHash] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [isLoadingUI, setIsLoadingUI] = useState(true);
 
   useEffect(() => {
@@ -60,17 +60,17 @@ export default function StellarFiatModal({
 
   if (!isOpen) return null;
 
-  const stroopsAmount = BigInt(Math.floor(parseFloat(amount || "0") * 1e7));
+  const stroopsAmount = BigInt(Math.floor(parseFloat(amount || '0') * 1e7));
 
   const handleAction = async () => {
     if (!connection.isConnected) return;
     if (!amount || stroopsAmount <= BigInt(0)) {
-      setErrorMsg("Please enter a valid amount.");
+      setErrorMsg('Please enter a valid amount.');
       return;
     }
 
-    setStatus("loading");
-    setErrorMsg("");
+    setStatus('loading');
+    setErrorMsg('');
     try {
       let hash: string;
       if (isAdminMode) {
@@ -89,17 +89,17 @@ export default function StellarFiatModal({
         );
       }
       setTxHash(hash);
-      setStatus("success");
+      setStatus('success');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Transaction failed");
-      setStatus("error");
+      setErrorMsg(err instanceof Error ? err.message : 'Transaction failed');
+      setStatus('error');
     }
   };
 
   const handleClose = () => {
-    setStatus("idle");
-    setTxHash("");
-    setErrorMsg("");
+    setStatus('idle');
+    setTxHash('');
+    setErrorMsg('');
     onClose();
   };
 
@@ -111,7 +111,7 @@ export default function StellarFiatModal({
           <div className="flex items-center gap-2">
             <ArrowDownUp className="w-5 h-5 text-blue-400" />
             <h2 className="text-lg font-semibold text-white">
-              {isAdminMode ? "Withdraw from Bridge" : "Deposit to Bridge"}
+              {isAdminMode ? 'Withdraw from Bridge' : 'Deposit to Bridge'}
             </h2>
           </div>
           <button
@@ -122,17 +122,17 @@ export default function StellarFiatModal({
           </button>
         </div>
 
-        {status === "success" ? (
+        {status === 'success' ? (
           <div className="text-center py-6">
             <CheckCircle className="w-14 h-14 text-green-400 mx-auto mb-4" />
             <p className="text-white font-semibold text-lg mb-2">
               Transaction Confirmed!
             </p>
             <p className="text-gray-400 text-sm mb-4">
-              {isAdminMode ? "Withdrawal" : "Deposit"} of{" "}
+              {isAdminMode ? 'Withdrawal' : 'Deposit'} of{' '}
               <span className="text-white font-medium">
                 {stroopsToDisplay(stroopsAmount)} XLM
-              </span>{" "}
+              </span>{' '}
               processed successfully.
             </p>
             <a
@@ -167,8 +167,8 @@ export default function StellarFiatModal({
                     onClick={() => handlePreset(preset)}
                     className={`flex-1 py-1.5 rounded-md text-xs font-medium border transition-colors ${
                       activePreset === preset
-                        ? "bg-blue-600 border-blue-500 text-white"
-                        : "bg-gray-800 border-gray-600 text-gray-300 hover:border-blue-500 hover:text-white"
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-gray-800 border-gray-600 text-gray-300 hover:border-blue-500 hover:text-white'
                     }`}
                   >
                     {preset}
@@ -211,11 +211,11 @@ export default function StellarFiatModal({
                 Connected: {connection.address.slice(0, 8)}…
                 {connection.address.slice(-4)}
               </span>
-              <span>Network: {connection.network || "TESTNET"}</span>
+              <span>Network: {connection.network || 'TESTNET'}</span>
             </div>
 
             {/* Error */}
-            {status === "error" && (
+            {status === 'error' && (
               <div className="flex items-center gap-2 text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2 mb-4 text-sm">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <span>{errorMsg}</span>
@@ -225,18 +225,18 @@ export default function StellarFiatModal({
             {/* CTA */}
             <button
               onClick={handleAction}
-              disabled={status === "loading" || !connection.isConnected}
+              disabled={status === 'loading' || !connection.isConnected}
               className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-lg font-semibold transition-all"
             >
-              {status === "loading" ? (
+              {status === 'loading' ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Signing & submitting…
                 </>
               ) : isAdminMode ? (
-                "Withdraw"
+                'Withdraw'
               ) : (
-                "Deposit"
+                'Deposit'
               )}
             </button>
 

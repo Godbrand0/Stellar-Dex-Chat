@@ -1,34 +1,41 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIAnalysisResult, TransactionData } from '@/types';
 
-
-
-const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || '');
+const genAI = new GoogleGenerativeAI(
+  process.env.NEXT_PUBLIC_GEMINI_API_KEY || '',
+);
 
 export class AIAssistant {
-    private model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  private model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-    async analyzeUserMessage(message: string, context?: Record<string, unknown>): Promise<AIAnalysisResult> {
-        try {
-            const prompt = this.buildAnalysisPrompt(message, context);
-            const result = await this.model.generateContent(prompt);
-            const response = result.response.text();
+  async analyzeUserMessage(
+    message: string,
+    context?: Record<string, unknown>,
+  ): Promise<AIAnalysisResult> {
+    try {
+      const prompt = this.buildAnalysisPrompt(message, context);
+      const result = await this.model.generateContent(prompt);
+      const response = result.response.text();
 
-            return this.parseAIResponse(response);
-        } catch (error) {
-            console.error('AI Analysis Error:', error);
-            return {
-                intent: 'unknown',
-                confidence: 0,
-                extractedData: {},
-                requiredQuestions: [],
-                suggestedResponse: "I'm having trouble understanding your request. Could you please rephrase it?"
-            };
-        }
+      return this.parseAIResponse(response);
+    } catch (error) {
+      console.error('AI Analysis Error:', error);
+      return {
+        intent: 'unknown',
+        confidence: 0,
+        extractedData: {},
+        requiredQuestions: [],
+        suggestedResponse:
+          "I'm having trouble understanding your request. Could you please rephrase it?",
+      };
     }
+  }
 
-    private buildAnalysisPrompt(message: string, context?: Record<string, unknown>): string {
-        return `
+  private buildAnalysisPrompt(
+    message: string,
+    context?: Record<string, unknown>,
+  ): string {
+    return `
 You are a professional AI agent specializing in cryptocurrency-to-fiat conversions on the Stellar network. You help users deposit XLM into the Stellar FiatBridge smart contract and convert crypto to fiat via secure bank transfers.
 
 PERSONALITY & TONE:
@@ -122,37 +129,43 @@ FIAT_CONVERSION EXAMPLE:
 
 Be conversational and helpful. Ask clarifying questions when information is missing. Always focus on XLM conversions on Stellar.
 `;
-    }
+  }
 
-    private parseAIResponse(response: string): AIAnalysisResult {
-        try {
-            // Extract JSON from response
-            const jsonMatch = response.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                return {
-                    intent: parsed.intent || 'unknown',
-                    confidence: parsed.confidence || 0.5,
-                    extractedData: parsed.extractedData || {},
-                    requiredQuestions: parsed.requiredQuestions || [],
-                    suggestedResponse: parsed.suggestedResponse || "How can I help you today?"
-                };
-            }
-        } catch (error) {
-            console.error('Failed to parse AI response:', error);
-        }
-
+  private parseAIResponse(response: string): AIAnalysisResult {
+    try {
+      // Extract JSON from response
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
         return {
-            intent: 'unknown',
-            confidence: 0,
-            extractedData: {},
-            requiredQuestions: [],
-            suggestedResponse: response || "How can I help you with your DeFi needs today? You can also say 'bridge tokens from Sepolia to Optimism' to use the CCIP bridge."
+          intent: parsed.intent || 'unknown',
+          confidence: parsed.confidence || 0.5,
+          extractedData: parsed.extractedData || {},
+          requiredQuestions: parsed.requiredQuestions || [],
+          suggestedResponse:
+            parsed.suggestedResponse || 'How can I help you today?',
         };
+      }
+    } catch (error) {
+      console.error('Failed to parse AI response:', error);
     }
 
-    async generateFollowUpQuestion(intent: string, missingData: string[]): Promise<string> {
-        const prompt = `
+    return {
+      intent: 'unknown',
+      confidence: 0,
+      extractedData: {},
+      requiredQuestions: [],
+      suggestedResponse:
+        response ||
+        "How can I help you with your DeFi needs today? You can also say 'bridge tokens from Sepolia to Optimism' to use the CCIP bridge.",
+    };
+  }
+
+  async generateFollowUpQuestion(
+    intent: string,
+    missingData: string[],
+  ): Promise<string> {
+    const prompt = `
 Generate a natural follow-up question for a DeFi trading assistant.
 
 Intent: ${intent}
@@ -162,53 +175,57 @@ Generate a single, conversational question to collect the missing information.
 Be helpful and specific about what you need.
 `;
 
-        try {
-            const result = await this.model.generateContent(prompt);
-            return result.response.text();
-        } catch (error) {
-            console.error('Failed to generate follow-up question:', error);
-            return "Could you provide more details about your request?";
-        }
+    try {
+      const result = await this.model.generateContent(prompt);
+      return result.response.text();
+    } catch (error) {
+      console.error('Failed to generate follow-up question:', error);
+      return 'Could you provide more details about your request?';
+    }
+  }
+
+  async validateTransactionData(data: TransactionData): Promise<{
+    isValid: boolean;
+    errors: string[];
+    suggestions: string[];
+  }> {
+    const errors: string[] = [];
+    const suggestions: string[] = [];
+
+    if (data.type === 'fiat_conversion') {
+      if (!data.tokenIn) errors.push('Token to convert is required');
+      if (!data.amountIn && !data.fiatAmount) {
+        errors.push('Either token amount or fiat amount is required');
+      }
+      if (!data.fiatCurrency) {
+        suggestions.push(
+          'Consider specifying the fiat currency (NGN, USD, etc.)',
+        );
+      }
     }
 
-    async validateTransactionData(data: TransactionData): Promise<{
-        isValid: boolean;
-        errors: string[];
-        suggestions: string[];
-    }> {
-        const errors: string[] = [];
-        const suggestions: string[] = [];
+    return {
+      isValid: errors.length === 0,
+      errors,
+      suggestions,
+    };
+  }
 
-        if (data.type === 'fiat_conversion') {
-            if (!data.tokenIn) errors.push('Token to convert is required');
-            if (!data.amountIn && !data.fiatAmount) {
-                errors.push('Either token amount or fiat amount is required');
-            }
-            if (!data.fiatCurrency) {
-                suggestions.push('Consider specifying the fiat currency (NGN, USD, etc.)');
-            }
-        }
+  async generateConversionReceipt(transactionData: {
+    transactionId?: string;
+    txHash?: string;
+    amount?: string;
+    token?: string;
+    fiatCurrency?: string;
+    estimatedFiat?: string;
+    status?: string;
+  }): Promise<string> {
+    const currentTime = new Date().toLocaleString();
+    const estimatedCompletion = new Date(
+      Date.now() + 15 * 60000,
+    ).toLocaleString(); // 15 minutes from now
 
-        return {
-            isValid: errors.length === 0,
-            errors,
-            suggestions
-        };
-    }
-
-    async generateConversionReceipt(transactionData: {
-        transactionId?: string;
-        txHash?: string;
-        amount?: string;
-        token?: string;
-        fiatCurrency?: string;
-        estimatedFiat?: string;
-        status?: string;
-    }): Promise<string> {
-        const currentTime = new Date().toLocaleString();
-        const estimatedCompletion = new Date(Date.now() + 15 * 60000).toLocaleString(); // 15 minutes from now
-
-        return `
+    return `
 **STELLAR FIATBRIDGE CONVERSION RECEIPT**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -248,26 +265,28 @@ Thank you for using DexFiat on Stellar!
 Your financial freedom is our priority.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         `.trim();
-    }
+  }
 
-    async generateMarketUpdate(tokenSymbol: string = 'XLM'): Promise<string> {
-        // In a real implementation, you'd fetch actual market data
-        const mockPrice = tokenSymbol === 'ETH' ? 2850 : 1850;
-        const mockChange = Math.random() > 0.5 ? '+' : '-';
-        const mockPercent = (Math.random() * 5).toFixed(2);
+  async generateMarketUpdate(tokenSymbol: string = 'XLM'): Promise<string> {
+    // In a real implementation, you'd fetch actual market data
+    const mockPrice = tokenSymbol === 'ETH' ? 2850 : 1850;
+    const mockChange = Math.random() > 0.5 ? '+' : '-';
+    const mockPercent = (Math.random() * 5).toFixed(2);
 
-        return `
+    return `
 **LIVE MARKET UPDATE - ${tokenSymbol.toUpperCase()}**
 
 Current Price: $${mockPrice.toLocaleString()} USD
 24h Change: ${mockChange}${mockPercent}%
 Best Time to Convert: ${Math.random() > 0.5 ? 'Good opportunity' : 'Consider waiting'}
 
-Our AI suggests: ${Math.random() > 0.5
-                ? 'Market conditions are favorable for conversion'
-                : 'Price trending upward - you might want to hold or convert partially'}
+Our AI suggests: ${
+      Math.random() > 0.5
+        ? 'Market conditions are favorable for conversion'
+        : 'Price trending upward - you might want to hold or convert partially'
+    }
 
 Ready to convert? I can help you get the best rates with minimal fees.
         `.trim();
-    }
+  }
 }
