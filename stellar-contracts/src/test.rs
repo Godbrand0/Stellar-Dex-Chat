@@ -731,10 +731,47 @@ use soroban_sdk::{
         let env = Env::default();
         env.mock_all_auths();
 
+<<<<<<< HEAD
     let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
     assert_eq!(bridge.get_receipt(&999), None);
 }
 
+=======
+        let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
+        assert_eq!(bridge.get_receipt(&999), None);
+    }
+
+    #[test]
+    fn test_instance_storage_ttl_extension() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // 1. Setup the bridge which does an `init` (a state-mutating function)
+        let (_, bridge, admin, token_addr, _, _) = setup_bridge(&env, 500);
+
+        // 2. Initial state is valid
+        assert_eq!(bridge.get_admin(), admin);
+
+        // 3. Advance the ledger significantly past the original default TTL (~30 days, assumed 520_000 ledgers)
+        let current_ledger = env.ledger().sequence();
+        env.ledger().with_mut(|li| {
+            li.sequence_number = current_ledger + 520_000;
+        });
+
+        // 4. Make another state-mutating call (e.g. set_limit) after ledger advancement
+        // This will extend the TTL again.
+        bridge.set_limit(&token_addr, &1000);
+
+        // 5. Confirm the contract is still callable and instance storage is preserved
+        assert_eq!(bridge.get_limit(), 1000);
+        assert_eq!(bridge.get_admin(), admin);
+    }
+}
+
+// ── property-based tests ──────────────────────────────────────────────
+
+proptest! {
+>>>>>>> 58d7c3d (Fix: move all test code into gated module, format codebase)
     #[test]
     fn test_instance_storage_ttl_extension() {
         let env = Env::default();
