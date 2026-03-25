@@ -1,7 +1,12 @@
 'use client';
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { ChatMessage, AIAnalysisResult, TransactionData } from '@/types';
+import {
+  ChatMessage,
+  AIAnalysisResult,
+  GuardrailCategory,
+  TransactionData,
+} from '@/types';
 import { AIAssistant } from '@/lib/aiAssistant';
 import { useStellarWallet } from '@/contexts/StellarWalletContext';
 import { useChatHistory } from './useChatHistory';
@@ -256,6 +261,7 @@ What would you like to do today? I'm here to make your XLM-to-fiat journey smoot
           content: enhancedResponse,
           timestamp: new Date(),
           metadata: {
+            guardrail: analysis.guardrail,
             transactionData: shouldShowTransactionData
               ? (analysis.extractedData as TransactionData)
               : undefined,
@@ -395,6 +401,10 @@ function generateSuggestedActions(
   const hasTransactionData = context?.hasTransactionData || false;
   const shouldAutoTrigger = context?.shouldAutoTrigger || false;
   const isAdmin = context?.isAdmin || false;
+
+  if (analysis.intent === 'guardrail' && analysis.guardrail) {
+    return generateGuardrailActions(analysis.guardrail.category, isConnected);
+  }
 
   if (shouldAutoTrigger && hasTransactionData) {
     actions.push({
@@ -555,6 +565,46 @@ function generateSuggestedActions(
       },
     );
   }
+
+  return actions;
+}
+
+function generateGuardrailActions(
+  category: GuardrailCategory,
+  isWalletConnected: boolean,
+) {
+  const actions = [];
+
+  if (!isWalletConnected) {
+    actions.push({
+      id: 'guardrail_connect_wallet',
+      type: 'connect_wallet' as const,
+      label: 'Connect Freighter',
+    });
+  }
+
+  if (category === 'unsupported_request') {
+    actions.push({
+      id: 'guardrail_supported_question',
+      type: 'query' as const,
+      label: 'Show Supported Tasks',
+      data: {
+        query:
+          'What supported actions can you help me with in Stellar Dex Chat?',
+      },
+    });
+  }
+
+  actions.push({
+    id: 'guardrail_market_rates',
+    type: 'market_rates' as const,
+    label: 'Check XLM Rates',
+  });
+  actions.push({
+    id: 'guardrail_learn_more',
+    type: 'learn_more' as const,
+    label: 'How It Works',
+  });
 
   return actions;
 }

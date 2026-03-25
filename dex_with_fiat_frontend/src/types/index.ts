@@ -10,6 +10,7 @@ export interface ChatMessage {
     confirmationRequired?: boolean;
     autoTriggerTransaction?: boolean;
     conversationCount?: number;
+    guardrail?: GuardrailResult;
   };
 }
 
@@ -48,10 +49,26 @@ export interface SuggestedAction {
     | 'check_portfolio'
     | 'market_rates'
     | 'learn_more'
-    | 'cancel';
+    | 'cancel'
+    | 'query';
   label: string;
   data?: Record<string, unknown>;
   priority?: boolean;
+}
+
+export type GuardrailCategory =
+  | 'unsupported_request'
+  | 'wallet_security'
+  | 'compliance_evasion'
+  | 'malicious_activity'
+  | 'financial_guarantee';
+
+export interface GuardrailResult {
+  triggered: boolean;
+  category: GuardrailCategory;
+  reason: string;
+  triggerCount?: number;
+  totalTriggerCount?: number;
 }
 
 export interface Token {
@@ -76,11 +93,13 @@ export interface AIAnalysisResult {
     | 'query'
     | 'portfolio'
     | 'technical_support'
+    | 'guardrail'
     | 'unknown';
   confidence: number;
   extractedData: Partial<TransactionData>;
   requiredQuestions: string[];
   suggestedResponse: string;
+  guardrail?: GuardrailResult;
 }
 
 // Paystack Types

@@ -118,6 +118,21 @@ export default function Message({ message, onActionClick }: MessageProps) {
                 minute: '2-digit',
               })}
             </div>
+            {message.metadata?.guardrail?.triggered && (
+              <div
+                className={`mt-3 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
+                  isDarkMode
+                    ? 'border-amber-700 bg-amber-950/40 text-amber-200'
+                    : 'border-amber-200 bg-amber-50 text-amber-800'
+                }`}
+              >
+                <AlertTriangle className="h-4 w-4" />
+                <span>
+                  Guardrail:{' '}
+                  {message.metadata.guardrail.category.replaceAll('_', ' ')}
+                </span>
+              </div>
+            )}
             {message.metadata?.suggestedActions &&
               message.metadata.suggestedActions.length > 0 && (
                 <div
