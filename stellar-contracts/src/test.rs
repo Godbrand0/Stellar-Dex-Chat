@@ -476,4 +476,45 @@ mod tests {
         assert_eq!(bridge.get_limit(), 1000);
         assert_eq!(bridge.get_admin(), admin);
     }
+
+    #[test]
+    fn test_emergency_drain_success() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, bridge, admin, token_addr, token, token_sac) = setup_bridge(&env, 1000);
+        let recipient = Address::generate(&env);
+        // Mint and deposit tokens to contract
+        token_sac.mint(&admin, &500);
+        bridge.deposit(&admin, &500, &token_addr, &Bytes::new(&env));
+        assert_eq!(token.balance(&contract_id), 500);
+        assert_eq!(token.balance(&recipient), 0);
+        // Drain all funds
+        bridge.emergency_drain(&recipient);
+        assert_eq!(token.balance(&contract_id), 0);
+        assert_eq!(token.balance(&recipient), 500);
+        // let events = std::format!("{:?}", env.events().all());
+        // assert!(events.contains("emergency_drain"));
+    }
+
+    #[test]
+    fn test_emergency_drain_zero_balance() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, bridge, _admin, _token_addr, _token, _token_sac) =
+            setup_bridge(&env, 1000);
+        let recipient = Address::generate(&env);
+        let result = bridge.try_emergency_drain(&recipient);
+        assert_eq!(result, Err(Ok(Error::ZeroAmount)));
+    }
+
+    #[test]
+    fn test_emergency_drain_invalid_recipient() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, bridge, admin, token_addr, token, token_sac) = setup_bridge(&env, 1000);
+        token_sac.mint(&admin, &100);
+        bridge.deposit(&admin, &100, &token_addr, &Bytes::new(&env));
+        let result = bridge.try_emergency_drain(&contract_id);
+        assert_eq!(result, Err(Ok(Error::InvalidRecipient)));
+    }
 }

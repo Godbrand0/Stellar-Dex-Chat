@@ -46,6 +46,8 @@ pub enum Error {
     ActionNotReady = 16,
     InactivityThresholdNotReached = 17,
     NoEmergencyRecoveryAddress = 18,
+    /// The recipient address is invalid (e.g., contract address itself).
+    InvalidRecipient = 19,
 }
 
 // ── Models ────────────────────────────────────────────────────────────────
@@ -167,6 +169,44 @@ pub struct FiatBridge;
 
 #[contractimpl]
 impl FiatBridge {
+    /// Emergency admin-only function to drain all held funds to a recipient in one atomic operation.
+    pub fn emergency_drain(env: Env, recipient: Address) -> Result<(), Error> {
+        // Only admin can call
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        let contract_addr = env.current_contract_address();
+        if recipient == contract_addr {
+            return Err(Error::InvalidRecipient);
+        }
+
+        // Use default token
+        let token_id: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Token)
+            .ok_or(Error::NotInitialized)?;
+        let token_client = token::Client::new(&env, &token_id);
+        let balance = token_client.balance(&contract_addr);
+        if balance <= 0 {
+            return Err(Error::ZeroAmount);
+        }
+
+        token_client.transfer(&contract_addr, &recipient, &balance);
+
+        env.events().publish(
+            (Symbol::new(&env, "emergency_drain"), recipient.clone()),
+            balance,
+        );
+
+        // If get_total_withdrawn exists, increment it here (not implemented in this codebase)
+
+        Ok(())
+    }
     /// Initialise the bridge once. Sets admin and registers the first whitelisted token.
     pub fn init(env: Env, admin: Address, token: Address, limit: i128) -> Result<(), Error> {
         env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);

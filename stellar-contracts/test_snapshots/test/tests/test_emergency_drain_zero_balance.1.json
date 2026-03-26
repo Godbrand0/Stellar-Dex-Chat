@@ -104,7 +104,7 @@
                       "symbol": "limit"
                     },
                     "val": {
-                      "i128": "500"
+                      "i128": "1000"
                     }
                   },
                   {
@@ -154,13 +154,11 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "SchemaVersion"
                             "symbol": "InactivityThreshold"
                           }
                         ]
                       },
                       "val": {
-                        "u32": 1,
                         "u32": 1555200
                       }
                     },
@@ -186,6 +184,18 @@
                       },
                       "val": {
                         "u64": "0"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "SchemaVersion"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u32": 1
                       }
                     },
                     {
