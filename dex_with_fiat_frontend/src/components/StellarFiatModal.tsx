@@ -10,6 +10,7 @@ import {
   ArrowDownUp,
   Copy,
   Check,
+  Download,
 } from 'lucide-react';
 import { useStellarWallet } from '@/contexts/StellarWalletContext';
 import {
@@ -25,6 +26,8 @@ import { getTokenPrice, formatFiatAmount } from '@/lib/cryptoPriceService';
 import SkeletonPayout from '@/components/ui/skeleton/SkeletonPayout';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useTxHistory } from '@/hooks/useTxHistory';
+import { downloadReceipt } from '@/lib/receipt';
+import type { ChatMessage } from '@/types';
 
 interface StellarFiatModalProps {
   isOpen: boolean;
@@ -34,6 +37,7 @@ interface StellarFiatModalProps {
   isAdminMode?: boolean;
   recipientAddress?: string;
   onDepositSuccess?: (result: { xlmAmount: number; note?: string }) => void;
+  messages?: ChatMessage[];
 }
 
 type TxStatus = 'idle' | 'loading' | 'success' | 'error';
@@ -79,6 +83,7 @@ export default function StellarFiatModal({
   isAdminMode = false,
   recipientAddress = '',
   onDepositSuccess,
+  messages = [],
 }: StellarFiatModalProps) {
   const { connection, signTx } = useStellarWallet();
   const { addNotification } = useNotifications();
@@ -538,6 +543,27 @@ export default function StellarFiatModal({
               </button>
             </div>
 
+            <button
+              type="button"
+              data-testid="download-receipt-button"
+              onClick={() =>
+                downloadReceipt({
+                  txHash,
+                  amount: stroopsToDisplay(stroopsAmount ?? BigInt(0)),
+                  wallet: connection.publicKey,
+                  network: connection.network || 'TESTNET',
+                  timestamp: new Date().toLocaleString(),
+                  type: isAdminMode ? 'Withdrawal' : 'Deposit',
+                  note: note.trim() || undefined,
+                  messages,
+                })
+              }
+              className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 transition-colors text-sm font-medium"
+            >
+              <Download className="w-4 h-4" />
+              Download Receipt
+            </button>
+
             {!isAdminMode && onDepositSuccess ? (
               <button
                 onClick={() =>
@@ -793,25 +819,39 @@ export default function StellarFiatModal({
               </div>
             )}
 
-            <button
-              onClick={handleAction}
-              disabled={isSubmitDisabled}
-              className="theme-primary-button w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-lg font-semibold transition-all"
-            >
-              {status === 'loading' ? (
-                <>
-                  <Loader2
-                    data-testid="loading-spinner"
-                    className="w-4 h-4 animate-spin"
-                  />
-                  Signing & submitting…
-                </>
-              ) : isAdminMode ? (
-                'Withdraw'
-              ) : (
-                'Deposit'
-              )}
-            </button>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleAction}
+                disabled={isSubmitDisabled}
+                className="theme-primary-button w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-lg font-semibold transition-all"
+              >
+                {status === 'loading' ? (
+                  <>
+                    <Loader2
+                      data-testid="loading-spinner"
+                      className="w-4 h-4 animate-spin"
+                    />
+                    Signing & submitting…
+                  </>
+                ) : isAdminMode ? (
+                  'Withdraw'
+                ) : (
+                  'Deposit'
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAmount('100');
+                  setTxHash('MOCK' + Math.random().toString(36).substring(2, 10).toUpperCase());
+                  setStatus('success');
+                }}
+                className="w-full text-[10px] text-gray-500 hover:text-blue-400 transition-colors py-1"
+              >
+                (Demo: Simulate Success)
+              </button>
+            </div>
 
             {!connection.isConnected && (
               <p className="theme-text-muted text-center text-xs mt-3">

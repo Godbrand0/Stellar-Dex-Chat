@@ -556,6 +556,7 @@ export default function StellarChatInterface() {
         defaultAmount={defaultAmount}
         fiatCurrency={fiatCurrency}
         onDepositSuccess={handleDepositSuccess}
+        messages={messages}
       />
 
       {/* Bank details & fiat payout modal */}
