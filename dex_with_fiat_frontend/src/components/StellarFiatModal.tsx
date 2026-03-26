@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { pollTransaction } from '@/lib/stellarContract';
 import {
   X,
@@ -41,12 +42,14 @@ type TxStatus = 'idle' | 'loading' | 'success' | 'error';
 const PENDING_TX_KEY = 'stellar_pending_tx';
 const LARGE_AMOUNT_RISK_THRESHOLD = 500;
 const RISK_CONFIRMATION_PHRASE = 'CONFIRM LARGE AMOUNT';
+const SUBMIT_COOLDOWN_MS = 2000;
 
 interface PendingTxRecord {
   hash: string;
   amount: string;
   isAdminMode: boolean;
   recipient: string;
+  idempotencyKey?: string;
 }
 
 function parseAmountToStroops(value: string): bigint | null {
@@ -98,6 +101,8 @@ export default function StellarFiatModal({
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoadingUI, setIsLoadingUI] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [lastActionTimestamp, setLastActionTimestamp] = useState(0);
+  const [idempotencyKey, setIdempotencyKey] = useState('');
 
   const handleCopyHash = () => {
     if (!txHash) return;
@@ -144,6 +149,8 @@ export default function StellarFiatModal({
     setNote('');
     setRiskConfirmation('');
     setLastLoggedRiskAmount('');
+    setIdempotencyKey(uuidv4());
+    setLastActionTimestamp(0);
 
     if (isAdminMode) {
       return;
@@ -320,7 +327,8 @@ export default function StellarFiatModal({
     (isDepositFlow &&
       (isLoadingBridgeLimit || isLimitUnavailable || isOverLimit)) ||
     (isRiskyAmount &&
-      riskConfirmation.trim().toUpperCase() !== RISK_CONFIRMATION_PHRASE);
+      riskConfirmation.trim().toUpperCase() !== RISK_CONFIRMATION_PHRASE) ||
+    Date.now() - lastActionTimestamp < SUBMIT_COOLDOWN_MS;
 
   useEffect(() => {
     if (
@@ -397,13 +405,26 @@ export default function StellarFiatModal({
       return;
     }
 
+    if (status === 'loading' || Date.now() - lastActionTimestamp < SUBMIT_COOLDOWN_MS) {
+      return;
+    }
+
     setStatus('loading');
+    setLastActionTimestamp(Date.now());
     setErrorMsg('');
+
+    console.log(`[StellarFiatModal] Initiating ${isAdminMode ? 'withdraw' : 'deposit'} with idempotencyKey: ${idempotencyKey}`);
 
     const onHashKnown = (hash: string) => {
       localStorage.setItem(
         PENDING_TX_KEY,
-        JSON.stringify({ hash, amount, isAdminMode, recipient } satisfies PendingTxRecord),
+        JSON.stringify({ 
+          hash, 
+          amount, 
+          isAdminMode, 
+          recipient,
+          idempotencyKey 
+        } satisfies PendingTxRecord),
       );
     };
 
@@ -806,6 +827,8 @@ export default function StellarFiatModal({
                   />
                   Signing & submitting…
                 </>
+              ) : status === 'error' ? (
+                'Retry Transaction'
               ) : isAdminMode ? (
                 'Withdraw'
               ) : (

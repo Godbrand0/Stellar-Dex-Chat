@@ -84,11 +84,13 @@ class NotificationStore {
 
 export const notificationStore = new NotificationStore();
 
+const EMPTY_ARRAY: AppNotification[] = [];
+
 export function useNotifications() {
   const notifications = useSyncExternalStore(
     (listener) => notificationStore.subscribe(listener),
     () => notificationStore.getSnapshot(),
-    () => [] // Server snapshot
+    () => EMPTY_ARRAY
   );
 
   const unreadCount = notifications.filter(n => !n.read).length;
