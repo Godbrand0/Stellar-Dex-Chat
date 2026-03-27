@@ -3,6 +3,8 @@
 import { ChatMessage } from '@/types';
 import { useStellarWallet } from '@/contexts/StellarWalletContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { useMasking } from '@/hooks/useMasking';
 import { Bot, User, AlertTriangle, Link, Clock, Coins } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
@@ -18,7 +20,14 @@ interface MessageProps {
 export default function Message({ message, onActionClick }: MessageProps) {
   const { connection } = useStellarWallet();
   const { isDarkMode } = useTheme();
+  const { maskingEnabled, maskingStyle } = useUserPreferences();
   const isUser = message.role === 'user';
+
+  // Apply masking to message content
+  const maskedContent = useMasking(message.content, {
+    enabled: maskingEnabled,
+    style: maskingStyle,
+  });
 
   return (
     <div
@@ -58,7 +67,7 @@ export default function Message({ message, onActionClick }: MessageProps) {
             >
               <div className="whitespace-pre-wrap break-words">
                 {isUser ? (
-                  message.content
+                  maskedContent
                 ) : (
                   <ReactMarkdown
                     className="prose prose-sm max-w-none"
@@ -102,7 +111,7 @@ export default function Message({ message, onActionClick }: MessageProps) {
                       ),
                     }}
                   >
-                    {message.content}
+                    {maskedContent}
                   </ReactMarkdown>
                 )}
               </div>
