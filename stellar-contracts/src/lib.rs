@@ -1,6 +1,7 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, Bytes, Env, Symbol,
+    contract, contracterror, contractimpl, contracttype, token, Address, Bytes, Env,
+    Symbol, Vec,
 };
 
 pub mod oracle;
@@ -56,6 +57,7 @@ pub struct WithdrawRequest {
 pub struct TokenConfig {
     pub limit: i128,
     pub total_deposited: i128,
+    pub total_withdrawn: i128,
 }
 
 #[contracttype]
@@ -148,15 +150,10 @@ impl FiatBridge {
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
-
-        let config = TokenConfig {
-            limit,
-            total_deposited: 0,
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::TokenRegistry(token), &config);
-
+        
+        let config = TokenConfig { limit, total_deposited: 0, total_withdrawn: 0 };
+        env.storage().persistent().set(&DataKey::TokenRegistry(token), &config);
+        
         env.storage().instance().set(&DataKey::SchemaVersion, &1u32);
         env.storage().instance().set(&DataKey::NextActionID, &0u64);
         env.storage()
@@ -275,6 +272,8 @@ impl FiatBridge {
         env.events()
             .publish((Symbol::new(&env, "rcpt_issd"),), receipt_id);
 
+        Self::check_invariants(&env, &token)?;
+
         Ok(receipt_id)
     }
 
@@ -295,8 +294,15 @@ impl FiatBridge {
             return Err(Error::InsufficientFunds);
         }
         client.transfer(&env.current_contract_address(), &to, &amount);
-        env.events()
-            .publish((Symbol::new(&env, "withdraw"), to), amount);
+
+        let mut config: TokenConfig = env.storage().persistent().get(&DataKey::TokenRegistry(token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        config.total_withdrawn += amount;
+        env.storage().persistent().set(&DataKey::TokenRegistry(token.clone()), &config);
+
+        env.events().publish((Symbol::new(&env, "withdraw"), to), amount);
+        
+        Self::check_invariants(&env, &token)?;
         Ok(())
     }
 
@@ -393,6 +399,13 @@ impl FiatBridge {
                 .set(&DataKey::WithdrawQueue(request_id), &request);
         }
 
+        let mut config: TokenConfig = env.storage().persistent().get(&DataKey::TokenRegistry(request.token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        config.total_withdrawn += execute_amount;
+        env.storage().persistent().set(&DataKey::TokenRegistry(request.token.clone()), &config);
+
+        Self::check_invariants(&env, &request.token)?;
+
         Ok(())
     }
 
@@ -473,13 +486,20 @@ impl FiatBridge {
     }
 
     pub fn accept_admin(env: Env) -> Result<(), Error> {
-        let pending: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PendingAdmin)
-            .ok_or(Error::NoPendingAdmin)?;
-        pending.require_auth();
-        env.storage().instance().set(&DataKey::Admin, &pending);
+        let stored_nominee: Address = env.storage().instance().get(&DataKey::PendingAdmin).ok_or(Error::NoPendingAdmin)?;
+        stored_nominee.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &stored_nominee);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        Ok(())
+    }
+
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    pub fn cancel_admin_transfer(env: Env) -> Result<(), Error> {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
         env.storage().instance().remove(&DataKey::PendingAdmin);
         Ok(())
     }
@@ -615,37 +635,133 @@ impl FiatBridge {
         Ok(())
     }
 
-    // ── View Functions ────────────────────────────────────────────────────
-    pub fn get_admin(env: Env) -> Result<Address, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)
+    pub fn get_balance(env: Env, token: Address) -> i128 {
+        let client = token::Client::new(&env, &token);
+        client.balance(&env.current_contract_address())
     }
-    pub fn get_token(env: Env) -> Result<Address, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)
+
+    pub fn get_receipt(env: Env, receipt_id: u64) -> Option<Receipt> {
+        env.storage().persistent().get(&DataKey::Receipt(receipt_id))
     }
-    pub fn get_limit(env: Env) -> i128 {
-        let tok = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::Token)
-            .unwrap();
-        env.storage()
-            .persistent()
-            .get::<_, TokenConfig>(&DataKey::TokenRegistry(tok))
-            .unwrap()
-            .limit
+
+    pub fn get_oracle(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Oracle)
     }
-    pub fn get_user_deposited(env: Env, user: Address) -> i128 {
-        env.storage()
-            .instance()
-            .get(&DataKey::UserDeposited(user))
-            .unwrap_or(0)
+
+    pub fn get_fiat_limit(env: Env) -> Option<i128> {
+        env.storage().instance().get(&DataKey::FiatLimit)
     }
+
+    pub fn deposit_for(env: Env, from: Address, to: Address, amount: i128, token: Address, reference: Bytes) -> Result<u64, Error> {
+        // Similar to deposit but for a different recipient
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+        from.require_auth();
+
+        if amount <= 0 { return Err(Error::ZeroAmount); }
+        if reference.len() > MAX_REFERENCE_LEN { return Err(Error::ReferenceTooLong); }
+
+        let mut config: TokenConfig = env.storage().persistent().get(&DataKey::TokenRegistry(token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        if amount > config.limit { return Err(Error::ExceedsLimit); }
+
+        Self::validate_fiat_limit(&env, &from, &token, amount)?;
+
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&from, &env.current_contract_address(), &amount);
+
+        let receipt_id: u64 = env.storage().instance().get(&DataKey::ReceiptCounter).unwrap_or(0);
+        let receipt = Receipt {
+            id: receipt_id,
+            depositor: to.clone(),
+            amount,
+            ledger: env.ledger().sequence(),
+            reference,
+            refunded: false,
+        };
+        env.storage().persistent().set(&DataKey::Receipt(receipt_id), &receipt);
+        env.storage().instance().set(&DataKey::ReceiptCounter, &(receipt_id + 1));
+
+        config.total_deposited += amount;
+        env.storage().persistent().set(&DataKey::TokenRegistry(token.clone()), &config);
+
+        let user_key = DataKey::UserDeposited(to.clone());
+        let user_total: i128 = env.storage().instance().get(&user_key).unwrap_or(0);
+        env.storage().instance().set(&user_key, &(user_total + amount));
+
+        env.events().publish((Symbol::new(&env, "deposit"), to), amount);
+        env.events().publish((Symbol::new(&env, "rcpt_issd"),), receipt_id);
+
+        Self::check_invariants(&env, &token)?;
+
+        Ok(receipt_id)
+    }
+
+
+
+    pub fn get_receipt_counter(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::ReceiptCounter).unwrap_or(0)
+    }
+
+    pub fn get_receipts_by_depositor(env: Env, depositor: Address, from_id: u64, limit: u64) -> Vec<Receipt> {
+        let counter: u64 = env.storage().instance().get(&DataKey::ReceiptCounter).unwrap_or(0);
+        let mut results: Vec<Receipt> = Vec::new(&env);
+        let mut count: u64 = 0;
+        let mut id: u64 = from_id;
+        while id < counter && count < limit {
+            if let Some(receipt) = env.storage().persistent().get::<_, Receipt>(&DataKey::Receipt(id)) {
+                if receipt.depositor == depositor {
+                    results.push_back(receipt);
+                    count += 1;
+                }
+            }
+            id += 1;
+        }
+        results
+    }
+
+    pub fn get_schema_version(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::SchemaVersion).unwrap_or(0)
+    }
+
+    pub fn migrate(env: Env) -> Result<(), Error> {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        let ver: u32 = env.storage().instance().get(&DataKey::SchemaVersion).unwrap_or(1);
+        env.storage().instance().set(&DataKey::SchemaVersion, &ver);
+        Ok(())
+    }
+
+    pub fn emergency_drain(env: Env, recipient: Address) -> Result<(), Error> {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        if recipient == env.current_contract_address() { return Err(Error::InvalidRecipient); }
+        let tok: Address = env.storage().instance().get(&DataKey::Token).ok_or(Error::NotInitialized)?;
+        let token_client = token::Client::new(&env, &tok);
+        let balance = token_client.balance(&env.current_contract_address());
+        if balance == 0 { return Err(Error::ZeroAmount); }
+        token_client.transfer(&env.current_contract_address(), &recipient, &balance);
+
+        let mut config: TokenConfig = env.storage().persistent().get(&DataKey::TokenRegistry(tok.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        config.total_withdrawn += balance;
+        env.storage().persistent().set(&DataKey::TokenRegistry(tok.clone()), &config);
+        
+        Self::check_invariants(&env, &tok)?;
+        Ok(())
+    }
+
+
+
+    pub fn remove_token(env: Env, token: Address) -> Result<(), Error> {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage().persistent().remove(&DataKey::TokenRegistry(token));
+        Ok(())
+    }
+
+    pub fn get_admin(env: Env) -> Address { env.storage().instance().get(&DataKey::Admin).unwrap() }
+    pub fn get_token(env: Env) -> Address { env.storage().instance().get(&DataKey::Token).unwrap() }
+    pub fn get_user_deposited(env: Env, user: Address) -> i128 { env.storage().instance().get(&DataKey::UserDeposited(user)).unwrap_or(0) }
     pub fn get_total_deposited(env: Env) -> i128 {
         let tok = env
             .storage()
@@ -721,6 +837,39 @@ impl FiatBridge {
                 .get(&DataKey::EmergencyRecoveryAddress),
         })
     }
+    pub fn get_lock_period(env: Env) -> u32 { env.storage().instance().get(&DataKey::LockPeriod).unwrap_or(0) }
+    pub fn get_cooldown(env: Env) -> u32 { env.storage().instance().get(&DataKey::CooldownLedgers).unwrap_or(0) }
+    pub fn get_withdrawal_request(env: Env, id: u64) -> Option<WithdrawRequest> { env.storage().persistent().get(&DataKey::WithdrawQueue(id)) }
+    pub fn get_last_deposit_ledger(env: Env, user: Address) -> Option<u32> { env.storage().temporary().get(&DataKey::LastDeposit(user)) }
+
+    pub fn get_total_withdrawn(env: Env) -> i128 {
+        let tok = env.storage().instance().get::<_, Address>(&DataKey::Token).unwrap();
+        env.storage().persistent().get::<_, TokenConfig>(&DataKey::TokenRegistry(tok)).unwrap().total_withdrawn
+    }
+
+    fn check_invariants(env: &Env, token: &Address) -> Result<(), Error> {
+        let config: TokenConfig = env.storage().persistent().get(&DataKey::TokenRegistry(token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        
+        let client = token::Client::new(env, token);
+        let balance = client.balance(&env.current_contract_address());
+        
+        // Invariant: balance == total_deposited - total_withdrawn
+        if balance != config.total_deposited - config.total_withdrawn {
+            #[cfg(test)]
+            panic!("Accounting invariant violation: balance ({}) != total_deposited ({}) - total_withdrawn ({})", 
+                balance, config.total_deposited, config.total_withdrawn);
+        }
+        
+        Ok(())
+    }
+
+    pub fn get_limit(env: Env) -> i128 {
+        let tok = env.storage().instance().get::<_, Address>(&DataKey::Token).unwrap();
+        env.storage().persistent().get::<_, TokenConfig>(&DataKey::TokenRegistry(tok)).unwrap().limit
+    }
+
+
 }
 
 #[cfg(any(test, feature = "testutils"))]
