@@ -3,10 +3,15 @@ node_modules/
 dex_with_fiat_frontend/.next/
 dex_with_fiat_frontend/node_modules/
 stellar-contracts/target/
+stellar-contracts/test_snapshots/
 
 # Local environment files
+.env
 .env.local
+.env.*
+
+# Tool-specific directories
+.qodo/
 
 # Contract build artifacts
 *.wasm
-
