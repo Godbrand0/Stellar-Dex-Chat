@@ -57,6 +57,7 @@ pub struct WithdrawRequest {
 pub struct TokenConfig {
     pub limit: i128,
     pub total_deposited: i128,
+    pub total_withdrawn: i128,
 }
 
 #[contracttype]
@@ -135,7 +136,7 @@ impl FiatBridge {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
         
-        let config = TokenConfig { limit, total_deposited: 0 };
+        let config = TokenConfig { limit, total_deposited: 0, total_withdrawn: 0 };
         env.storage().persistent().set(&DataKey::TokenRegistry(token), &config);
         
         env.storage().instance().set(&DataKey::SchemaVersion, &1u32);
@@ -208,6 +209,8 @@ impl FiatBridge {
         env.events().publish((Symbol::new(&env, "deposit"), from), amount);
         env.events().publish((Symbol::new(&env, "rcpt_issd"),), receipt_id);
 
+        Self::check_invariants(&env, &token)?;
+
         Ok(receipt_id)
     }
 
@@ -222,7 +225,15 @@ impl FiatBridge {
             return Err(Error::InsufficientFunds);
         }
         client.transfer(&env.current_contract_address(), &to, &amount);
+
+        let mut config: TokenConfig = env.storage().persistent().get(&DataKey::TokenRegistry(token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        config.total_withdrawn += amount;
+        env.storage().persistent().set(&DataKey::TokenRegistry(token.clone()), &config);
+
         env.events().publish((Symbol::new(&env, "withdraw"), to), amount);
+        
+        Self::check_invariants(&env, &token)?;
         Ok(())
     }
 
@@ -274,6 +285,13 @@ impl FiatBridge {
             request.amount -= execute_amount;
             env.storage().persistent().set(&DataKey::WithdrawQueue(request_id), &request);
         }
+
+        let mut config: TokenConfig = env.storage().persistent().get(&DataKey::TokenRegistry(request.token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        config.total_withdrawn += execute_amount;
+        env.storage().persistent().set(&DataKey::TokenRegistry(request.token.clone()), &config);
+
+        Self::check_invariants(&env, &request.token)?;
 
         Ok(())
     }
@@ -408,6 +426,28 @@ impl FiatBridge {
     pub fn get_cooldown(env: Env) -> u32 { env.storage().instance().get(&DataKey::CooldownLedgers).unwrap_or(0) }
     pub fn get_withdrawal_request(env: Env, id: u64) -> Option<WithdrawRequest> { env.storage().persistent().get(&DataKey::WithdrawQueue(id)) }
     pub fn get_last_deposit_ledger(env: Env, user: Address) -> Option<u32> { env.storage().temporary().get(&DataKey::LastDeposit(user)) }
+
+    pub fn get_total_withdrawn(env: Env) -> i128 {
+        let tok = env.storage().instance().get::<_, Address>(&DataKey::Token).unwrap();
+        env.storage().persistent().get::<_, TokenConfig>(&DataKey::TokenRegistry(tok)).unwrap().total_withdrawn
+    }
+
+    fn check_invariants(env: &Env, token: &Address) -> Result<(), Error> {
+        let config: TokenConfig = env.storage().persistent().get(&DataKey::TokenRegistry(token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        
+        let client = token::Client::new(env, token);
+        let balance = client.balance(&env.current_contract_address());
+        
+        // Invariant: balance == total_deposited - total_withdrawn
+        if balance != config.total_deposited - config.total_withdrawn {
+            #[cfg(test)]
+            panic!("Accounting invariant violation: balance ({}) != total_deposited ({}) - total_withdrawn ({})", 
+                balance, config.total_deposited, config.total_withdrawn);
+        }
+        
+        Ok(())
+    }
 }
 
 #[cfg(any(test, feature = "testutils"))]

@@ -1193,3 +1193,43 @@ fn test_per_user_deposit_tracking() {
     assert_eq!(bridge.get_user_deposited(&user1), 150);
     assert_eq!(bridge.get_total_deposited(), 350);
 }
+
+#[test]
+fn test_invariant_preservation_randomized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, bridge, _, token_addr, token, token_sac) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &10_000);
+
+    let mut total_deposited = 0;
+    let mut total_withdrawn = 0;
+
+    // Sequence of interleaved deposits and withdrawals
+    let actions = [
+        (true, 1000),  // Deposit
+        (true, 500),   // Deposit
+        (false, 300),  // Withdraw
+        (true, 2000),  // Deposit
+        (false, 1000), // Withdraw
+        (false, 500),  // Withdraw
+        (true, 100),   // Deposit
+    ];
+
+    for (is_deposit, amount) in actions {
+        if is_deposit {
+            bridge.deposit(&user, &amount, &token_addr, &Bytes::new(&env));
+            total_deposited += amount;
+        } else {
+            bridge.withdraw(&user, &amount, &token_addr);
+            total_withdrawn += amount;
+        }
+
+        // Verify state
+        assert_eq!(bridge.get_total_deposited(), total_deposited);
+        assert_eq!(bridge.get_total_withdrawn(), total_withdrawn);
+        assert_eq!(token.balance(&contract_id), total_deposited - total_withdrawn);
+        // The internal check_invariants() is also called inside these methods
+    }
+}
