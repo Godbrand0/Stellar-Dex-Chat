@@ -1,4 +1,3 @@
-use soroban_sdk::testutils::Events;
 extern crate alloc;
 use alloc::format;
 // #[test]
@@ -878,7 +877,7 @@ mod tests {
         let result = bridge.try_deposit(&user, &100, &token_addr, &Bytes::new(&env));
         assert_eq!(result, Err(Ok(Error::OracleNotSet)));
     }
-#![cfg(test)]
+} // end mod tests
 extern crate std;
 
 use super::*;
@@ -1101,7 +1100,7 @@ fn test_transfer_admin() {
     let new_admin = Address::generate(&env);
 
     bridge.transfer_admin(&new_admin);
-    bridge.accept_admin();
+    bridge.accept_admin(&new_admin);
 
     assert_eq!(bridge.get_admin(), new_admin);
 }
@@ -1193,4 +1192,3 @@ fn test_per_user_deposit_tracking() {
     assert_eq!(bridge.get_user_deposited(&user1), 150);
     assert_eq!(bridge.get_total_deposited(), 350);
 }
-} // end mod tests
