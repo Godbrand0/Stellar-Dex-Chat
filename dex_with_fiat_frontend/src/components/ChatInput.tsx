@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useDraftPersistence } from '@/hooks/useDraftPersistence';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -12,6 +13,8 @@ interface ChatInputProps {
   onOpenBridgeModal?: () => void;
   isLoading: boolean;
   placeholder?: string;
+  threadId?: string | null;
+  draftTtlMs?: number;
 }
 
 export default function ChatInput({
@@ -22,13 +25,32 @@ export default function ChatInput({
   onOpenBridgeModal,
   isLoading,
   placeholder = 'Type your message...',
+  threadId = null,
+  draftTtlMs,
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [showCommands, setShowCommands] = useState(false);
+  const prevThreadId = useRef<string | null>(null);
+  const { saveDraft, loadDraft, clearDraft } = useDraftPersistence({
+    threadId,
+    ttlMs: draftTtlMs,
+  });
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showPalette, setShowPalette] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [paletteIndex, setPaletteIndex] = useState(0);
+
+  // Restore draft when threadId changes
+  useEffect(() => {
+    if (threadId === prevThreadId.current) return;
+    prevThreadId.current = threadId;
+    setMessage(loadDraft());
+  }, [threadId, loadDraft]);
+
+  // Persist draft on every keystroke (debounced via browser paint)
+  useEffect(() => {
+    saveDraft(message);
+  }, [message, saveDraft]);
 
   const commands = [
     { cmd: '/deposit', desc: 'Add funds to your Stellar account' },
@@ -57,6 +79,7 @@ export default function ChatInput({
     if (message.trim() && !isLoading) {
       onSendMessage(message.trim());
       setMessage('');
+      clearDraft();
       setShowCommands(false);
     }
   };

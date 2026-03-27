@@ -82,6 +82,7 @@ export default function StellarChatInterface() {
     cancelPendingRequest,
     clearChat,
     loadChatSession,
+    currentSessionId,
     setTransactionReadyCallback,
     setIsAdmin: setChatIsAdmin,
   } = useChat();
@@ -638,6 +639,7 @@ export default function StellarChatInterface() {
             }}
             isLoading={isLoading}
             placeholder="Ask about XLM rates, deposit, or anything Stellar…"
+            threadId={currentSessionId}
           />
           <div className="px-6 pb-4">
             <WalletConnectionTimeline
