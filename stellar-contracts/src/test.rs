@@ -90,7 +90,7 @@ mod tests {
         token_sac.mint(&payer, &1000);
         let ref_bytes = Bytes::from_slice(&env, b"third_party_ref");
         let receipt_id = bridge.deposit_for(&payer, &beneficiary, &200, &token_addr, &ref_bytes);
-        assert_eq!(bridge.get_balance(), 200);
+        assert_eq!(bridge.get_balance(&token_addr), 200);
         assert_eq!(bridge.get_user_deposited(&beneficiary), 200);
         let receipt = bridge.get_receipt(&receipt_id).unwrap();
         assert_eq!(receipt.depositor, beneficiary);
@@ -135,7 +135,7 @@ mod tests {
         let new_admin = Address::generate(&env);
         bridge.transfer_admin(&new_admin);
         assert_eq!(bridge.get_pending_admin(), Some(new_admin.clone()));
-        bridge.accept_admin(&new_admin);
+        bridge.accept_admin();
         assert_eq!(bridge.get_admin(), new_admin);
     }
 
