@@ -226,6 +226,7 @@ pub enum DataKey {
     EscrowMigrationCursor,
     PendingRenounceLedger,
     Operator(Address),
+    OperatorList,
     OperatorHeartbeat(Address),
     OperatorNonce(Address),
     Denied(Address),
@@ -1177,9 +1178,28 @@ impl FiatBridge {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
+        Self::prune_inactive_operators_internal(&env);
+
+        let was_active = env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Operator(operator.clone()))
+            .unwrap_or(false);
         env.storage()
             .instance()
-            .set(&DataKey::Operator(operator), &active);
+            .set(&DataKey::Operator(operator.clone()), &active);
+
+        let mut operators = Self::get_operator_list(&env);
+        if active {
+            if !was_active {
+                operators.push_back(operator);
+            }
+        } else if was_active {
+            operators = Self::remove_operator_from_list(&env, &operators, &operator);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::OperatorList, &operators);
         Ok(())
     }
 
@@ -1244,6 +1264,17 @@ impl FiatBridge {
             .unwrap_or(0)
     }
 
+    pub fn prune_inactive_operators(env: Env) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        Self::prune_inactive_operators_internal(&env);
+        Ok(())
+    }
+
     fn validate_and_increment_nonce(env: &Env, operator: &Address, provided_nonce: u64) -> Result<(), Error> {
         let current_nonce: u64 = env
             .storage()
@@ -1271,6 +1302,69 @@ impl FiatBridge {
         );
 
         Ok(())
+    }
+
+    fn prune_inactive_operators_internal(env: &Env) {
+        let threshold: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::InactivityThreshold)
+            .unwrap_or(DEFAULT_INACTIVITY_THRESHOLD);
+        let current_ledger = env.ledger().sequence();
+        let operators = Self::get_operator_list(env);
+        let mut retained = Vec::new(env);
+
+        for operator in operators.iter() {
+            let is_active = env
+                .storage()
+                .instance()
+                .get::<_, bool>(&DataKey::Operator(operator.clone()))
+                .unwrap_or(false);
+            if !is_active {
+                continue;
+            }
+
+            let heartbeat = env
+                .storage()
+                .instance()
+                .get::<_, u32>(&DataKey::OperatorHeartbeat(operator.clone()));
+            let is_inactive = heartbeat
+                .map(|last| current_ledger.saturating_sub(last) > threshold)
+                .unwrap_or(false);
+
+            if is_inactive {
+                env.storage()
+                    .instance()
+                    .set(&DataKey::Operator(operator.clone()), &false);
+                env.events().publish(
+                    (Symbol::new(env, "operator_pruned"), operator),
+                    current_ledger,
+                );
+            } else {
+                retained.push_back(operator);
+            }
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::OperatorList, &retained);
+    }
+
+    fn get_operator_list(env: &Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::OperatorList)
+            .unwrap_or(Vec::new(env))
+    }
+
+    fn remove_operator_from_list(env: &Env, operators: &Vec<Address>, target: &Address) -> Vec<Address> {
+        let mut filtered = Vec::new(env);
+        for operator in operators.iter() {
+            if operator != *target {
+                filtered.push_back(operator);
+            }
+        }
+        filtered
     }
 
     // ── Ownership Renounce ────────────────────────────────────────────────

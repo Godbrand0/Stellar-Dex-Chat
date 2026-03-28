@@ -832,6 +832,52 @@ fn test_operator_heartbeat() {
 }
 
 #[test]
+fn test_prune_inactive_operators_keeps_active_operator() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1_000);
+
+    let inactive = Address::generate(&env);
+    let active = Address::generate(&env);
+
+    bridge.set_operator(&inactive, &true);
+    bridge.set_operator(&active, &true);
+    bridge.heartbeat(&inactive, &0);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = DEFAULT_INACTIVITY_THRESHOLD + 5;
+    });
+
+    bridge.heartbeat(&active, &0);
+    bridge.prune_inactive_operators();
+
+    assert!(!bridge.is_operator(&inactive));
+    assert!(bridge.is_operator(&active));
+}
+
+#[test]
+fn test_set_operator_prunes_inactive_on_next_admin_action() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1_000);
+
+    let stale = Address::generate(&env);
+    let newcomer = Address::generate(&env);
+
+    bridge.set_operator(&stale, &true);
+    bridge.heartbeat(&stale, &0);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = DEFAULT_INACTIVITY_THRESHOLD + 5;
+    });
+
+    bridge.set_operator(&newcomer, &true);
+
+    assert!(!bridge.is_operator(&stale));
+    assert!(bridge.is_operator(&newcomer));
+}
+
+#[test]
 fn test_receipt_id_determinism_and_uniqueness() {
     let env = Env::default();
     env.mock_all_auths();
