@@ -40,7 +40,7 @@ import UserSettings from './UserSettings';
 import WalletConnectionTimeline from './WalletConnectionTimeline';
 import { clearExpiredDrafts } from '@/lib/draftUtils';
 import { useTranslation } from '@/contexts/TranslationContext';
-import ReceiptDrawer from './ReceiptDrawer';
+import ReceiptDrawer from './ReceiptDrawerWrapper';
 import { useTxHistory } from '@/hooks/useTxHistory';
 import {
   subscribeToQueue,

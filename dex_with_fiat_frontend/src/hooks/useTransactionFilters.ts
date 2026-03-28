@@ -39,9 +39,14 @@ export function useTransactionFilters(
   const searchParams = useSearchParams();
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Parse filter state from URL
+  // Parse filter state from URL (with fallback for SSR)
   const filterState = useMemo(() => {
-    return deserializeFilters(searchParams);
+    try {
+      return deserializeFilters(searchParams);
+    } catch {
+      // Fallback for SSR/SSG
+      return { status: [], asset: [], network: [] };
+    }
   }, [searchParams]);
 
   // Compute filtered transactions
