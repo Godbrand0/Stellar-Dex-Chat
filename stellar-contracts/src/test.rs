@@ -3,7 +3,7 @@ extern crate std;
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
+    testutils::{Address as _, Ledger},
     token::{Client as TokenClient, StellarAssetClient},
     Address, Bytes, Env,
 };
@@ -87,6 +87,7 @@ fn test_time_locked_withdrawal() {
     assert_eq!(req.token, token_addr);
     assert_eq!(req.amount, 100);
     assert_eq!(req.unlock_ledger, start_ledger + 100);
+    assert_eq!(req.queued_ledger, start_ledger);
 
     let result = bridge.try_execute_withdrawal(&req_id, &None);
     assert_eq!(result, Err(Ok(Error::WithdrawalLocked)));
@@ -99,6 +100,83 @@ fn test_time_locked_withdrawal() {
     assert_eq!(token.balance(&user), 900);
     assert_eq!(token.balance(&contract_id), 100);
     assert_eq!(bridge.get_withdrawal_request(&req_id), None);
+}
+
+#[test]
+fn test_withdraw_queue_metrics_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_contract_id, bridge, _admin, token_addr, _token, token_sac) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &5_000);
+
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env));
+
+    // Empty queue
+    assert_eq!(bridge.get_wq_depth(), 0);
+    assert_eq!(bridge.get_wq_oldest_queued_ledger(), None);
+    assert_eq!(bridge.get_wq_oldest_age_ledgers(), None);
+
+    // Enqueue first request
+    let l0 = env.ledger().sequence();
+    let r1 = bridge.request_withdrawal(&user, &100, &token_addr);
+    assert_eq!(bridge.get_wq_depth(), 1);
+    assert_eq!(bridge.get_wq_oldest_queued_ledger(), Some(l0));
+    assert_eq!(bridge.get_wq_oldest_age_ledgers(), Some(0));
+
+    // Advance ledger and enqueue second request
+    env.ledger().with_mut(|li| {
+        li.sequence_number = l0 + 7;
+    });
+    let l1 = env.ledger().sequence();
+    let _r2 = bridge.request_withdrawal(&user, &50, &token_addr);
+    assert_eq!(bridge.get_wq_depth(), 2);
+    // Oldest remains first
+    assert_eq!(bridge.get_wq_oldest_queued_ledger(), Some(l0));
+    assert_eq!(bridge.get_wq_oldest_age_ledgers(), Some(l1 - l0));
+
+    // Execute first request (default lock_period=0), oldest should move to second
+    bridge.execute_withdrawal(&r1, &None);
+    assert_eq!(bridge.get_wq_depth(), 1);
+    assert_eq!(bridge.get_wq_oldest_queued_ledger(), Some(l1));
+    assert_eq!(bridge.get_wq_oldest_age_ledgers(), Some(0));
+}
+
+#[test]
+fn test_withdraw_queue_metrics_cancel_oldest() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_contract_id, bridge, _admin, token_addr, _token, token_sac) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &5_000);
+
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env));
+
+    let l0 = env.ledger().sequence();
+    let r1 = bridge.request_withdrawal(&user, &100, &token_addr);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = l0 + 3;
+    });
+    let l1 = env.ledger().sequence();
+    let r2 = bridge.request_withdrawal(&user, &50, &token_addr);
+
+    assert_eq!(bridge.get_wq_depth(), 2);
+    assert_eq!(bridge.get_wq_oldest_queued_ledger(), Some(l0));
+
+    // Cancel oldest request: oldest should advance to r2
+    bridge.cancel_withdrawal(&r1);
+    assert_eq!(bridge.get_wq_depth(), 1);
+    assert_eq!(bridge.get_wq_oldest_queued_ledger(), Some(l1));
+    assert_eq!(bridge.get_wq_oldest_age_ledgers(), Some(0));
+
+    // Cancel remaining request: queue empty
+    bridge.cancel_withdrawal(&r2);
+    assert_eq!(bridge.get_wq_depth(), 0);
+    assert_eq!(bridge.get_wq_oldest_queued_ledger(), None);
+    assert_eq!(bridge.get_wq_oldest_age_ledgers(), None);
 }
 
 #[test]
