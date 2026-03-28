@@ -388,7 +388,7 @@ What would you like to do today? I'm here to make your XLM-to-fiat journey smoot
                       messageCount: newMessageCount,
                       hasTransactionData: !!pendingTransactionData,
                       shouldAutoTrigger: !!shouldAutoTrigger,
-                      isAdmin: conversationState.isAdmin,
+                      isAdmin: isAdmin,
                       lowConfidence: needsClarification,
                     }),
                     confirmationRequired:
@@ -444,7 +444,7 @@ What would you like to do today? I'm here to make your XLM-to-fiat journey smoot
     [
       aiAssistant,
       connection,
-      conversationState,
+      isAdmin,
       isLoading,
       messages,
       onTransactionReady,
