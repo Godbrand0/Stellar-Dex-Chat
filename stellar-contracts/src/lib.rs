@@ -28,6 +28,7 @@ pub enum Error {
     NotAllowed = 202,
     NoPendingAdmin = 203,
     InvalidRecipient = 204,
+    NotOperator = 205,
 
     // --- 300 series: Constraints & Limits ---
     ZeroAmount = 301,
