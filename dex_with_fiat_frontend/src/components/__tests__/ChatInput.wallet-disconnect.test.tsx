@@ -61,7 +61,7 @@ describe('ChatInput - Wallet Disconnect Handling', () => {
     const textarea = screen.getByPlaceholderText('Type a message...');
 
     fireEvent.change(textarea, { target: { value: 'Test message' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     expect(screen.getByText('Wallet disconnected. Reconnect to continue.')).toBeInTheDocument();
     expect(mockOnSendMessage).not.toHaveBeenCalled();
@@ -72,7 +72,7 @@ describe('ChatInput - Wallet Disconnect Handling', () => {
     const textarea = screen.getByPlaceholderText('Type a message...');
 
     fireEvent.change(textarea, { target: { value: 'Test message' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     expect(mockOnSendMessage).not.toHaveBeenCalled();
   });
@@ -82,7 +82,7 @@ describe('ChatInput - Wallet Disconnect Handling', () => {
     const textarea = screen.getByPlaceholderText('Type a message...');
 
     fireEvent.change(textarea, { target: { value: 'Test message' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     expect(screen.getByText('Wallet disconnected. Reconnect to continue.')).toBeInTheDocument();
 

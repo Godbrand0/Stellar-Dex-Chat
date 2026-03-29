@@ -32,6 +32,11 @@ export default function ChatInput({
   const { t } = useTranslation();
   const { connection } = useStellarWallet();
   const activePlaceholder = placeholder || t('chat.placeholder');
+  const isApplePlatform =
+    typeof navigator !== 'undefined' &&
+    /(Mac|iPhone|iPad|iPod)/i.test(navigator.platform);
+  const submitShortcutLabel = isApplePlatform ? 'Cmd+Enter' : 'Ctrl+Enter';
+  const submitShortcutKeys = isApplePlatform ? 'Meta+Enter' : 'Control+Enter';
   const [message, setMessage] = useState('');
   const [showCommands, setShowCommands] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -67,15 +72,15 @@ export default function ChatInput({
   };
 
   const [walletWarning, setWalletWarning] = useState(false);
+  const isSubmitDisabled = !message.trim() || isLoading || isSubmitting;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitMessage = () => {
     if (!connection.isConnected) {
       setWalletWarning(true);
       return;
     }
     setWalletWarning(false);
-    if (message.trim() && !isLoading && !isSubmitting) {
+    if (!isSubmitDisabled) {
       executeSubmit(async () => {
         onSendMessage(message.trim());
         setMessage('');
@@ -83,6 +88,11 @@ export default function ChatInput({
         setShowCommands(false);
       }, 'chat_message_submit');
     }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitMessage();
   };
 
   useEffect(() => {
@@ -110,9 +120,9 @@ export default function ChatInput({
       return;
     }
 
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
-      handleSubmit(e);
+      submitMessage();
     }
   };
 
@@ -292,6 +302,7 @@ export default function ChatInput({
             onKeyDown={handleKeyDown}
             placeholder={activePlaceholder}
             disabled={isLoading}
+            aria-describedby="chat-submit-shortcut"
             className="theme-input w-full resize-none border rounded-lg px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             rows={1}
             style={{
@@ -309,7 +320,11 @@ export default function ChatInput({
 
         <button
           type="submit"
-          disabled={!message.trim() || isLoading || isSubmitting}
+          disabled={isSubmitDisabled}
+          title={`Send message (${submitShortcutLabel})`}
+          aria-label={`Send message (${submitShortcutLabel})`}
+          aria-describedby="chat-submit-shortcut"
+          aria-keyshortcuts={submitShortcutKeys}
           className="theme-primary-button flex items-center justify-center w-12 h-12 disabled:bg-gray-300 text-white rounded-lg transition-all duration-200 disabled:cursor-not-allowed transform hover:scale-105 disabled:hover:scale-100 shadow-lg"
         >
           {isLoading || isSubmitting ? (
@@ -319,6 +334,10 @@ export default function ChatInput({
           )}
         </button>
       </div>
+
+      <p id="chat-submit-shortcut" className="sr-only" aria-live="polite">
+        Send message with {submitShortcutLabel}. The send button stays disabled while a request is pending.
+      </p>
 
       {walletWarning && (
         <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-200 text-xs">

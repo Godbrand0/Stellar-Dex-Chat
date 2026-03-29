@@ -33,17 +33,17 @@ describe('ChatInput - Rapid Click Protection', () => {
     jest.restoreAllMocks();
   });
 
-  it('should prevent duplicate message submissions on rapid Enter key presses', async () => {
+  it('should prevent duplicate message submissions on rapid keyboard shortcut presses', async () => {
     render(<ChatInput {...defaultProps} />);
     const textarea = screen.getByPlaceholderText('Type a message...');
 
     // Type a message
     fireEvent.change(textarea, { target: { value: 'Test message' } });
 
-    // Rapidly press Enter multiple times
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    // Rapidly press Ctrl+Enter multiple times
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     await waitFor(() => {
       // Should only send once
@@ -59,7 +59,9 @@ describe('ChatInput - Rapid Click Protection', () => {
     // Type a message
     fireEvent.change(textarea, { target: { value: 'Test message' } });
 
-    const submitButton = screen.getByRole('button', { name: /submit/i });
+    const submitButton = screen.getByRole('button', {
+      name: /send message \(ctrl\+enter\)/i,
+    });
 
     // Rapidly click the submit button
     fireEvent.click(submitButton);
@@ -79,7 +81,9 @@ describe('ChatInput - Rapid Click Protection', () => {
     
     fireEvent.change(textarea, { target: { value: 'Test message' } });
 
-    const submitButton = screen.getByRole('button', { name: /submit/i });
+    const submitButton = screen.getByRole('button', {
+      name: /send message \(ctrl\+enter\)/i,
+    });
 
     // Click submit
     fireEvent.click(submitButton);
@@ -96,7 +100,7 @@ describe('ChatInput - Rapid Click Protection', () => {
 
     // First submission
     fireEvent.change(textarea, { target: { value: 'First message' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     await waitFor(() => {
       expect(mockOnSendMessage).toHaveBeenCalledTimes(1);
@@ -107,7 +111,7 @@ describe('ChatInput - Rapid Click Protection', () => {
 
     // Second submission
     fireEvent.change(textarea, { target: { value: 'Second message' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     await waitFor(() => {
       expect(mockOnSendMessage).toHaveBeenCalledTimes(2);
@@ -120,7 +124,7 @@ describe('ChatInput - Rapid Click Protection', () => {
     const textarea = screen.getByPlaceholderText('Type a message...');
 
     fireEvent.change(textarea, { target: { value: 'Test message' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     expect(mockOnSendMessage).not.toHaveBeenCalled();
   });
@@ -134,8 +138,8 @@ describe('ChatInput - Rapid Click Protection', () => {
     fireEvent.change(textarea, { target: { value: 'Test message' } });
 
     // Rapid submissions
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     await waitFor(() => {
       expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -152,7 +156,7 @@ describe('ChatInput - Rapid Click Protection', () => {
     fireEvent.change(textarea, { target: { value: 'Test message' } });
     expect(textarea.value).toBe('Test message');
 
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     await waitFor(() => {
       expect(textarea.value).toBe('');
@@ -176,5 +180,31 @@ describe('ChatInput - Rapid Click Protection', () => {
     await waitFor(() => {
       expect(mockOnSendMessage).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('should not submit on Enter without the modifier shortcut', () => {
+    render(<ChatInput {...defaultProps} />);
+    const textarea = screen.getByPlaceholderText('Type a message...');
+
+    fireEvent.change(textarea, { target: { value: 'Test message' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+
+    expect(mockOnSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('should expose the shortcut through the submit button tooltip and label', () => {
+    render(<ChatInput {...defaultProps} />);
+    const textarea = screen.getByPlaceholderText('Type a message...');
+
+    fireEvent.change(textarea, { target: { value: 'Test message' } });
+
+    const submitButton = screen.getByRole('button', {
+      name: /send message \(ctrl\+enter\)/i,
+    });
+
+    expect(submitButton).toHaveAttribute('title', 'Send message (Ctrl+Enter)');
+    expect(submitButton).toHaveAttribute('aria-keyshortcuts', 'Control+Enter');
+    expect(textarea).toHaveAttribute('aria-describedby', 'chat-submit-shortcut');
+    expect(screen.getByText(/send message with ctrl\+enter/i)).toBeInTheDocument();
   });
 });
