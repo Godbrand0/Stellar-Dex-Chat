@@ -2194,7 +2194,6 @@ impl FiatBridge {
         };
 
         env.events().publish(
-            (Symbol::new(&env, "batch_ok"), Symbol::new(&env, "v1")),
             (EVENT_VERSION, Symbol::new(&env, "batch_ok")),
             (success_count, failure_count, total_ops),
         );
