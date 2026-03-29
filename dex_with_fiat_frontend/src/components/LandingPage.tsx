@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '../contexts/ThemeContext';
+import OfflineStatusBanner from '@/components/OfflineStatusBanner';
 
 interface FeatureCardProps {
   icon: React.ElementType;
@@ -215,6 +216,9 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] transition-colors duration-200">
+      {/* Offline Status Banner */}
+      <OfflineStatusBanner />
+
       {/* Theme Toggle Button */}
       <div className="fixed top-6 right-6 z-50">
         <button

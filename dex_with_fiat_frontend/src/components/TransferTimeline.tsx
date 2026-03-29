@@ -124,8 +124,22 @@ export default function TransferTimeline({
     );
   }
 
+  const currentEvent = events[events.length - 1];
+  const currentMeta = STATUS_META[currentEvent.status];
+  const currentStatusAnnouncement = `${currentMeta.label}. ${currentEvent.label ?? currentMeta.defaultLabel}`;
+
   return (
     <div className="relative" aria-label="Transfer status timeline">
+      {/* Accessibility: Live region to announce status changes */}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+        role="status"
+      >
+        {currentStatusAnnouncement}
+      </div>
+
       {/* Vertical connector line */}
       <span
         className="absolute left-[19px] top-5 bottom-5 w-px bg-[var(--color-border)]"

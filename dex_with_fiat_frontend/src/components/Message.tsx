@@ -4,6 +4,7 @@ import { useStellarWallet } from '@/contexts/StellarWalletContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useMasking } from '@/hooks/useMasking';
+import { useCurrencyConversion } from '@/hooks/useCurrencyConversion';
 import { ChatMessage } from '@/types';
 import { AlertTriangle, Bot, Clock, Coins, Copy, Check, Link, RotateCcw, User, Loader2, RefreshCcw, XCircle } from 'lucide-react';
 import React, { useState, useCallback } from 'react';
@@ -39,6 +40,16 @@ export default function Message({ message, onActionClick, onRetry, shouldAnimate
   const isPending = message.metadata?.status === 'pending';
   const isFailed = message.metadata?.status === 'failed';
   const [receiptCopied, setReceiptCopied] = useState(false);
+
+  // Currency conversion hook for transaction amounts
+  const amountForConversion = message.metadata?.transactionData?.amountIn 
+    ? parseFloat(String(message.metadata.transactionData.amountIn))
+    : undefined;
+  const tokenForConversion = message.metadata?.transactionData?.tokenIn || 'XLM';
+  const { displayText: conversionDisplayText } = useCurrencyConversion(
+    amountForConversion,
+    tokenForConversion,
+  );
 
   const handleCopyReceiptId = useCallback((receiptId: string) => {
     navigator.clipboard?.writeText(receiptId).then(() => {
@@ -325,7 +336,7 @@ export default function Message({ message, onActionClick, onRetry, shouldAnimate
                     <div className="flex justify-between">
                       <span>Amount:</span>
                       <span className="theme-text-primary font-medium">
-                        {message.metadata.transactionData.amountIn}
+                        {conversionDisplayText || message.metadata.transactionData.amountIn}
                       </span>
                     </div>
                   )}

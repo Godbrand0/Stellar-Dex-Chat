@@ -26,6 +26,8 @@ pub const ESCROW_STORAGE_VERSION: u32 = 1;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
+    Overflow = 8,
+
     // --- 100 series: Initialization & State ---
     NotInitialized = 101,
     AlreadyInitialized = 102,
@@ -81,6 +83,9 @@ pub enum Error {
     // --- 900 series: Replay Protection ---
     InvalidNonce = 901,
     StaleNonce = 902,
+
+    // --- 1000 series: Deposit Floor ---
+    BelowMinimum = 1001,
 }
 
 // ── Models ────────────────────────────────────────────────────────────────
@@ -212,6 +217,7 @@ pub enum DataKey {
     LastDeposit(Address),
     ReceiptCounter,
     Receipt(BytesN<32>),
+    MinDeposit,
     LockPeriod,
     NextRequestID,
     WithdrawQueueLen,
@@ -270,13 +276,17 @@ pub struct FiatBridge;
 
 #[contractimpl]
 impl FiatBridge {
-    pub fn init(env: Env, admin: Address, token: Address, limit: i128) -> Result<(), Error> {
+    pub fn init(env: Env, admin: Address, token: Address, limit: i128, min_deposit: i128) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
         }
         if limit <= 0 {
             return Err(Error::ZeroAmount);
         }
+        if min_deposit < 1 || min_deposit >= limit {
+            return Err(Error::BelowMinimum);
+        }
+        env.storage().instance().set(&DataKey::MinDeposit, &min_deposit);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
 
@@ -402,6 +412,15 @@ impl FiatBridge {
             .persistent()
             .get(&DataKey::TokenRegistry(token.clone()))
             .ok_or(Error::TokenNotWhitelisted)?;
+        // ── Issue #113: minimum deposit floor ────────────────────────────
+        let min_deposit: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinDeposit)
+            .unwrap_or(1);
+        if amount < min_deposit {
+            return Err(Error::BelowMinimum);
+        }
         if amount > config.limit {
             return Err(Error::ExceedsLimit);
         }
@@ -463,16 +482,17 @@ impl FiatBridge {
             .instance()
             .set(&DataKey::ReceiptCounter, &(receipt_counter + 1));
 
-        config.total_deposited += amount;
+        config.total_deposited = config.total_deposited.checked_add(amount).ok_or(Error::Overflow)?;
         env.storage()
             .persistent()
             .set(&DataKey::TokenRegistry(token.clone()), &config);
 
         let user_key = DataKey::UserDeposited(from.clone());
         let user_total: i128 = env.storage().instance().get(&user_key).unwrap_or(0);
+        let new_user_total = user_total.checked_add(amount).ok_or(Error::Overflow)?;
         env.storage()
             .instance()
-            .set(&user_key, &(user_total + amount));
+            .set(&user_key, &new_user_total);
 
         // Track large deposits for withdrawal cooldown
         let withdraw_threshold: i128 = env
@@ -980,6 +1000,31 @@ impl FiatBridge {
             .persistent()
             .set(&DataKey::TokenRegistry(token), &config);
         Ok(())
+    }
+
+    // ── Issue #113: minimum deposit floor ────────────────────────────
+    pub fn set_min_deposit(env: Env, min: i128) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        if min < 1 {
+            return Err(Error::BelowMinimum);
+        }
+        env.storage().instance().set(&DataKey::MinDeposit, &min);
+        env.events()
+            .publish((EVENT_VERSION, Symbol::new(&env, "set_min_dep")), min);
+        Ok(())
+    }
+
+    pub fn get_min_deposit(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::MinDeposit)
+            .unwrap_or(1)
     }
 
     pub fn set_daily_deposit_limit(

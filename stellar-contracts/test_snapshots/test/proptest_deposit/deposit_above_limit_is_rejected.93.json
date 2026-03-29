@@ -39,7 +39,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
                 {
-                  "i128": "628"
+                  "i128": "1359"
                 }
               ]
             }
@@ -368,7 +368,7 @@
                       "symbol": "amount"
                     },
                     "val": {
-                      "i128": "628"
+                      "i128": "1359"
                     }
                   },
                   {

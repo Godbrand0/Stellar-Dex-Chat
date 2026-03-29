@@ -1,11 +1,10 @@
-'use client';
-
 import React from 'react';
 import { X, Receipt, ExternalLink, Clock, CheckCircle2, AlertCircle, Trash2 } from 'lucide-react';
 import { TransactionHistoryEntry } from '@/types';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useTransactionFilters } from '@/hooks/useTransactionFilters';
+import { TransactionAmountDisplay } from './TransactionAmountDisplay';
 import { FilterChipBar } from './filters/FilterChipBar';
 
 interface ReceiptDrawerProps {
@@ -146,9 +145,12 @@ export default function ReceiptDrawer({
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-500">{t('receipt.amount')}</span>
-                      <span className="font-medium dark:text-gray-300">
-                        {tx.amount} {tx.asset}
-                      </span>
+                      <TransactionAmountDisplay
+                        amount={tx.amount}
+                        asset={tx.asset}
+                        fiatAmount={tx.fiatAmount}
+                        fiatCurrency={tx.fiatCurrency}
+                      />
                     </div>
                     {tx.fiatAmount && (
                       <div className="flex justify-between">
