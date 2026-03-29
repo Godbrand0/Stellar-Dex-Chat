@@ -329,6 +329,21 @@ fn test_transfer_admin() {
 }
 
 #[test]
+fn test_transfer_admin_to_self_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, admin, _, _, _) = setup_bridge(&env, 100);
+
+    // Attempting to transfer to self should fail with InvalidRecipient
+    let result = bridge.try_transfer_admin(&admin);
+    assert_eq!(result, Err(Ok(Error::SameAdmin)));
+    
+    // Admin should remain the same
+    assert_eq!(bridge.get_admin(), admin);
+}
+
+#[test]
 fn test_set_limit() {
     let env = Env::default();
     env.mock_all_auths();
@@ -3061,6 +3076,8 @@ fn test_withdraw_to_self_address_rejected() {
     bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // Attempt to withdraw to the contract's own address — should be rejected
+    // Order: caller, to, amount, token
+
     let result = bridge.try_withdraw(&admin, &contract_id, &100, &token_addr);
     assert_eq!(result, Err(Ok(Error::InvalidRecipient)));
 
@@ -3181,3 +3198,4 @@ fn test_set_min_deposit_admin_only() {
     let result = bridge.try_set_min_deposit(&0);
     assert_eq!(result, Err(Ok(Error::BelowMinimum)));
 }
+
