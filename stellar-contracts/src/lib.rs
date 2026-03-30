@@ -526,6 +526,8 @@ pub enum DataKey {
     AntiSandwichDelay,
     WithdrawalQuota,
     UserDailyDeposit(Address, Address),
+    TokenAllowlistEnabled(Address),
+    TokenAllowed(Address, Address),
     UserDailyWithdrawal(Address),
     EscrowStorageVersion,
     EscrowRecord(u64),
@@ -677,18 +679,35 @@ impl FiatBridge {
             .extend_ttl(&key, max_delay, max_delay + 100);
 
         // Allowlist
-        let allowlist_on: bool = env
+        let global_allowlist_on: bool = env
             .storage()
             .instance()
             .get(&DataKey::AllowlistEnabled)
             .unwrap_or(false);
-        if allowlist_on
-            && !env
+
+        if global_allowlist_on {
+            if !env
                 .storage()
                 .persistent()
                 .has(&DataKey::Allowed(from.clone()))
-        {
-            return Err(Error::NotAllowed);
+            {
+                return Err(Error::NotAllowed);
+            }
+        } else {
+            // Per-token allowlist check (Issue #354)
+            let token_allowlist_on: bool = env
+                .storage()
+                .instance()
+                .get(&DataKey::TokenAllowlistEnabled(token.clone()))
+                .unwrap_or(false);
+            if token_allowlist_on
+                && !env
+                    .storage()
+                    .persistent()
+                    .has(&DataKey::TokenAllowed(token.clone(), from.clone()))
+            {
+                return Err(Error::NotAllowed);
+            }
         }
 
         // Denylist
@@ -780,14 +799,14 @@ impl FiatBridge {
             .instance()
             .set(&DataKey::ReceiptCounter, &(receipt_counter + 1));
 
-        config.total_deposited = config.total_deposited.checked_add(amount).ok_or(Error::Overflow)?;
+        config.total_deposited = config.total_deposited.checked_add(amount).ok_or(Error::InternalError)?;
         env.storage()
             .persistent()
             .set(&DataKey::TokenRegistry(token.clone()), &config);
 
         let user_key = DataKey::UserDeposited(from.clone());
         let user_total: i128 = env.storage().instance().get(&user_key).unwrap_or(0);
-        let new_user_total = user_total.checked_add(amount).ok_or(Error::Overflow)?;
+        let new_user_total = user_total.checked_add(amount).ok_or(Error::InternalError)?;
         env.storage()
             .instance()
             .set(&user_key, &new_user_total);
@@ -931,7 +950,7 @@ impl FiatBridge {
             .persistent()
             .get(&DataKey::TokenRegistry(token.clone()))
             .ok_or(Error::TokenNotWhitelisted)?;
-        config.total_withdrawn += amount;
+        config.total_withdrawn = config.total_withdrawn.checked_add(amount).ok_or(Error::InternalError)?;
         env.storage()
             .persistent()
             .set(&DataKey::TokenRegistry(token.clone()), &config);
@@ -1058,7 +1077,7 @@ impl FiatBridge {
             .persistent()
             .get(&DataKey::TokenRegistry(token.clone()))
             .ok_or(Error::TokenNotWhitelisted)?;
-        config.total_liabilities += amount;
+        config.total_liabilities = config.total_liabilities.checked_add(amount).ok_or(Error::InternalError)?;
         env.storage()
             .persistent()
             .set(&DataKey::TokenRegistry(token.clone()), &config);
@@ -1195,7 +1214,7 @@ impl FiatBridge {
             .persistent()
             .get(&DataKey::TokenRegistry(request.token.clone()))
             .ok_or(Error::TokenNotWhitelisted)?;
-        config.total_withdrawn += execute_amount;
+        config.total_withdrawn = config.total_withdrawn.checked_add(execute_amount).ok_or(Error::InternalError)?;
         config.total_liabilities -= execute_amount;
         env.storage()
             .persistent()
@@ -1434,6 +1453,49 @@ impl FiatBridge {
         env.storage()
             .persistent()
             .set(&DataKey::TokenRegistry(token), &config);
+        Ok(())
+    }
+
+    pub fn set_token_allowlist_enabled(
+        env: Env,
+        token: Address,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenAllowlistEnabled(token), &enabled);
+        Ok(())
+    }
+
+    pub fn add_token_allowlist(env: Env, token: Address, address: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::TokenAllowed(token, address), &true);
+        Ok(())
+    }
+
+    pub fn remove_token_allowlist(env: Env, token: Address, address: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .persistent()
+            .remove(&DataKey::TokenAllowed(token, address));
         Ok(())
     }
 
@@ -2372,6 +2434,20 @@ impl FiatBridge {
             .instance()
             .get(&DataKey::UserDeposited(user))
             .unwrap_or(0)
+    }
+
+    pub fn get_daily_deposit_record(env: Env, user: Address) -> Option<UserDailyVolume> {
+        let mut vol: UserDailyVolume = env
+            .storage()
+            .instance()
+            .get(&DataKey::UserDailyVolume(user))?;
+        
+        let curr = env.ledger().sequence();
+        if curr >= vol.window_start.saturating_add(WINDOW_LEDGERS) {
+            vol.usd_cents = 0;
+            vol.window_start = curr;
+        }
+        Some(vol)
     }
 
     pub fn get_total_deposited(env: Env) -> Result<i128, Error> {

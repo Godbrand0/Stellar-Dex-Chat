@@ -18,7 +18,7 @@ vi.mock('@/lib/env', () => ({ get env() { return mockEnv; } }));
 vi.mock('@/lib/telemetry', () => ({
   telemetry: {
     extractTraceFromHeaders: () => ({ traceId: 'trace1', spanId: 'span1' }),
-    createSpan: (_name: string, _spanId: string, _traceId: string) => ({ spanId: 'span1' }),
+    createSpan: () => ({ spanId: 'span1' }),
     addLog: vi.fn(),
     finishSpan: vi.fn(),
     setTraceHeaders: vi.fn(),

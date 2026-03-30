@@ -5,7 +5,6 @@ import {
   TransactionData,
 } from '@/types';
 import { telemetry } from '@/lib/telemetry';
-import { mergeParserWithAI } from '@/lib/messageParser';
 
 type GuardrailMatch = {
   category: GuardrailCategory;
