@@ -525,7 +525,6 @@ export default function ChatHistorySidebar({
           {!isCollapsed && 'New Conversation'}
         </button>
       </div>
-      </div>
 
       {showDeleteConfirm && (
         <div className="theme-overlay fixed inset-0 flex items-center justify-center z-[100] backdrop-blur-sm">
