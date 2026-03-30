@@ -13,6 +13,7 @@ pub const MIN_TTL: u32 = 518_400; // ~30 days
 pub const MAX_TTL: u32 = 535_680; // ~31 days
 const MAX_REFERENCE_LEN: u32 = 64;
 const WINDOW_LEDGERS: u32 = 17_280; // ~24 hours
+const CIRCUIT_BREAKER_RESET_LEDGERS: u32 = 34_560; // ~48 hours (2 × WINDOW_LEDGERS)
 const WITHDRAWAL_EXPIRY_WINDOW_LEDGERS: u32 = 17_280; // ~24 hours — reserved for future withdrawal expiry feature
 const MIN_TIMELOCK_DELAY: u32 = 34_560; // 48 hours
 const DEFAULT_INACTIVITY_THRESHOLD: u32 = 1_555_200; // ~3 months
@@ -475,6 +476,15 @@ pub struct WithdrawalExpiredEvent {
     pub queued_ledger: u32,
 }
 
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CircuitBreakerAutoResetEvent {
+    #[topic]
+    pub version: u32,
+    pub tripped_at: u32,
+    pub reset_at: u32,
+}
+
 // ── Storage keys ──────────────────────────────────────────────────────────
 #[contracttype]
 pub enum DataKey {
@@ -538,6 +548,8 @@ pub enum DataKey {
     // ── Issue #209: global circuit breaker ───────────────────────────────
     CircuitBreakerThreshold,
     CircuitBreakerTripped,
+    CircuitBreakerTrippedAt,
+    CircuitBreakerResetWindow,
     GlobalDailyWithdrawn,
     // ── Issue #226: withdrawal queue risk tiers ───────────────────────────
     TierQueueHead(u32),
@@ -2915,6 +2927,30 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Set the number of ledgers after which a tripped circuit breaker
+    /// automatically resets. Pass `0` to use the compile-time default
+    /// (`CIRCUIT_BREAKER_RESET_LEDGERS`). Set to `u32::MAX` to disable
+    /// auto-reset entirely.
+    pub fn set_circuit_breaker_reset_window(env: Env, ledgers: u32) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::CircuitBreakerResetWindow, &ledgers);
+        Ok(())
+    }
+
+    pub fn get_circuit_breaker_reset_window(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::CircuitBreakerResetWindow)
+            .unwrap_or(CIRCUIT_BREAKER_RESET_LEDGERS)
+    }
+
     /// Reset the circuit breaker so withdrawals can resume.
     pub fn reset_circuit_breaker(env: Env) -> Result<(), Error> {
         let admin: Address = env
@@ -2957,17 +2993,51 @@ impl FiatBridge {
             return Ok(());
         }
 
-        // Reject immediately if already tripped.
+        let curr = env.ledger().sequence();
+
+        // Check if breaker is tripped but eligible for auto-reset.
         if env
             .storage()
             .instance()
             .get::<_, bool>(&DataKey::CircuitBreakerTripped)
             .unwrap_or(false)
         {
-            return Err(Error::CircuitBreakerActive);
+            let reset_window: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::CircuitBreakerResetWindow)
+                .unwrap_or(CIRCUIT_BREAKER_RESET_LEDGERS);
+
+            let tripped_at: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::CircuitBreakerTrippedAt)
+                .unwrap_or(0);
+
+            if reset_window != u32::MAX && curr > tripped_at.saturating_add(reset_window) {
+                // Auto-reset: clear the breaker and roll the volume window.
+                env.storage()
+                    .instance()
+                    .set(&DataKey::CircuitBreakerTripped, &false);
+                env.storage()
+                    .instance()
+                    .set(&DataKey::GlobalDailyWithdrawn, &GlobalDailyWithdrawn {
+                        amount: 0,
+                        window_start: curr,
+                    });
+                CircuitBreakerAutoResetEvent {
+                    version: EVENT_VERSION,
+                    tripped_at,
+                    reset_at: curr,
+                }
+                .publish(env);
+                // Fall through — process this withdrawal normally.
+            } else {
+                // Still within reset window — reject.
+                return Err(Error::CircuitBreakerActive);
+            }
         }
 
-        let curr = env.ledger().sequence();
         let mut vol: GlobalDailyWithdrawn = env
             .storage()
             .instance()
@@ -2977,27 +3047,32 @@ impl FiatBridge {
                 window_start: curr,
             });
 
-        // Roll window if 24h has elapsed.
+        // Roll 24h window if elapsed.
         if curr >= vol.window_start + WINDOW_LEDGERS {
             vol.amount = 0;
             vol.window_start = curr;
         }
 
         let new_total = vol.amount + amount;
-
-        // Update running total first so the state persists.
         vol.amount = new_total;
         env.storage()
             .instance()
             .set(&DataKey::GlobalDailyWithdrawn, &vol);
 
         if new_total > threshold {
-            // This withdrawal crossed the threshold: allow it but trip the
-            // breaker so that all subsequent withdrawals are paused.
+            // Trip the breaker — record when it was tripped.
             env.storage()
                 .instance()
                 .set(&DataKey::CircuitBreakerTripped, &true);
-            CircuitBreakerTrippedEvent { version: EVENT_VERSION, new_total, threshold }.publish(env);
+            env.storage()
+                .instance()
+                .set(&DataKey::CircuitBreakerTrippedAt, &curr);
+            CircuitBreakerTrippedEvent {
+                version: EVENT_VERSION,
+                new_total,
+                threshold,
+            }
+            .publish(env);
         }
 
         Ok(())

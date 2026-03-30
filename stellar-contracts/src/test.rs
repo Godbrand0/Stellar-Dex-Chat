@@ -3406,3 +3406,168 @@ fn test_reclaim_does_not_transfer_funds() {
     // User balance unchanged — nothing returned
     assert_eq!(token.balance(&user), 4_500);
 }
+
+// ── Circuit breaker auto-reset tests ─────────────────────────────────────
+
+#[test]
+fn test_circuit_breaker_auto_resets_after_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 100_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &50_000);
+
+    bridge.deposit(&user, &10_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Set threshold low enough to trip immediately
+    bridge.set_circuit_breaker_threshold(&500);
+
+    // This withdrawal trips the breaker
+    bridge.withdraw(&admin, &user, &600, &token_addr);
+    assert!(bridge.is_circuit_breaker_tripped());
+
+    // Still blocked within reset window
+    let result = bridge.try_withdraw(&admin, &user, &100, &token_addr);
+    assert_eq!(result, Err(Ok(Error::CircuitBreakerActive)));
+
+    // Advance past the default reset window (CIRCUIT_BREAKER_RESET_LEDGERS = 34_560)
+    let start = env.ledger().sequence();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start + 34_561;
+    });
+
+    // Now the withdrawal should succeed — auto-reset kicks in
+    bridge.withdraw(&admin, &user, &100, &token_addr);
+
+    // Breaker should be clear after auto-reset
+    assert!(!bridge.is_circuit_breaker_tripped());
+}
+
+#[test]
+fn test_circuit_breaker_still_blocked_before_reset_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 100_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &50_000);
+
+    bridge.deposit(&user, &10_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.set_circuit_breaker_threshold(&500);
+
+    bridge.withdraw(&admin, &user, &600, &token_addr);
+    assert!(bridge.is_circuit_breaker_tripped());
+
+    // Advance to exactly the reset window boundary — should still be blocked (strict >)
+    let start = env.ledger().sequence();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start + 34_560;
+    });
+
+    let result = bridge.try_withdraw(&admin, &user, &100, &token_addr);
+    assert_eq!(result, Err(Ok(Error::CircuitBreakerActive)));
+}
+
+#[test]
+fn test_set_and_get_circuit_breaker_reset_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1_000);
+
+    // Default is the compile-time constant
+    assert_eq!(bridge.get_circuit_breaker_reset_window(), 34_560);
+
+    // Set a custom window
+    bridge.set_circuit_breaker_reset_window(&1_000);
+    assert_eq!(bridge.get_circuit_breaker_reset_window(), 1_000);
+}
+
+#[test]
+fn test_circuit_breaker_auto_reset_uses_configured_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 100_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &50_000);
+
+    bridge.deposit(&user, &10_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.set_circuit_breaker_threshold(&500);
+
+    // Set a short custom reset window
+    bridge.set_circuit_breaker_reset_window(&100);
+
+    bridge.withdraw(&admin, &user, &600, &token_addr);
+    assert!(bridge.is_circuit_breaker_tripped());
+
+    // Still blocked at exactly the boundary
+    let start = env.ledger().sequence();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start + 100;
+    });
+    let result = bridge.try_withdraw(&admin, &user, &100, &token_addr);
+    assert_eq!(result, Err(Ok(Error::CircuitBreakerActive)));
+
+    // Auto-resets one ledger past the window
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start + 101;
+    });
+    bridge.withdraw(&admin, &user, &100, &token_addr);
+    assert!(!bridge.is_circuit_breaker_tripped());
+}
+
+#[test]
+fn test_circuit_breaker_auto_reset_disabled_with_max_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 100_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &50_000);
+
+    bridge.deposit(&user, &10_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.set_circuit_breaker_threshold(&500);
+
+    // Disable auto-reset
+    bridge.set_circuit_breaker_reset_window(&u32::MAX);
+
+    bridge.withdraw(&admin, &user, &600, &token_addr);
+    assert!(bridge.is_circuit_breaker_tripped());
+
+    // Advance a very long time — should still be blocked
+    let start = env.ledger().sequence();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start + 1_000_000;
+    });
+
+    let result = bridge.try_withdraw(&admin, &user, &100, &token_addr);
+    assert_eq!(result, Err(Ok(Error::CircuitBreakerActive)));
+
+    // Manual reset still works
+    bridge.reset_circuit_breaker();
+    bridge.withdraw(&admin, &user, &100, &token_addr);
+}
+
+#[test]
+fn test_manual_reset_still_works_after_feature_added() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 100_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &50_000);
+
+    bridge.deposit(&user, &10_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.set_circuit_breaker_threshold(&500);
+
+    bridge.withdraw(&admin, &user, &600, &token_addr);
+    assert!(bridge.is_circuit_breaker_tripped());
+
+    // Manual reset works without waiting for window
+    bridge.reset_circuit_breaker();
+    assert!(!bridge.is_circuit_breaker_tripped());
+
+    bridge.withdraw(&admin, &user, &100, &token_addr);
+}
