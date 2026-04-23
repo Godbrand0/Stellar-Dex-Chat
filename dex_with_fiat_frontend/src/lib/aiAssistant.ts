@@ -6,6 +6,38 @@ import {
   TransactionData,
 } from '@/types';
 import { telemetry } from '@/lib/telemetry';
+import { toastStore } from '@/lib/toastStore';
+
+function isLikelyNetworkError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return false;
+  }
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (error instanceof DOMException && error.name === 'NetworkError') {
+    return true;
+  }
+  if (error instanceof Error) {
+    const m = error.message.toLowerCase();
+    return (
+      m.includes('failed to fetch') ||
+      m.includes('network') ||
+      m.includes('load failed')
+    );
+  }
+  return false;
+}
+
+function notifyAiNetworkUnavailable(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  toastStore.addToast(
+    "Can't reach the AI service. Check your network connection and try again.",
+    'warning',
+  );
+}
 
 type GuardrailMatch = {
   category: GuardrailCategory;
@@ -115,6 +147,9 @@ export class AIAssistant {
       // Re-throw abort errors cleanly without logging -- callers handle cancellation
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw error;
+      }
+      if (isLikelyNetworkError(error)) {
+        notifyAiNetworkUnavailable();
       }
       console.error('AI Analysis Error:', error);
       return {
@@ -492,6 +527,9 @@ Choose one of the next actions below and I'll keep it moving.`;
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw error;
+      }
+      if (isLikelyNetworkError(error)) {
+        notifyAiNetworkUnavailable();
       }
       console.error('Failed to generate follow-up question:', error);
     }

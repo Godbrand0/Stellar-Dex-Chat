@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ArrowLeftRight, X, ChevronDown } from 'lucide-react';
 import { ChatSession, ChatMessage } from '@/types';
 import { UseSplitViewReturn } from '@/hooks/useSplitView';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { useToast } from '@/hooks/useToast';
 
 interface SplitViewComparisonProps {
   splitView: UseSplitViewReturn;
@@ -155,6 +157,32 @@ export default function SplitViewComparison({
 }: SplitViewComparisonProps) {
   const { state, close, setLeftSession, setRightSession, swapSessions, selectMessage, leftSession, rightSession } =
     splitView;
+
+  const { isOnline, wasOffline, resetWasOffline } = useOnlineStatus();
+  const { addToast } = useToast();
+  const wasOnlineRef = useRef(isOnline);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const wasOnline = wasOnlineRef.current;
+    if (wasOnline && !isOnline) {
+      addToast({
+        message:
+          "You're offline. Thread comparison won't update until you reconnect.",
+        severity: 'warning',
+        durationMs: 4500,
+      });
+    } else if (!wasOnline && isOnline && wasOffline) {
+      addToast({
+        message: 'Back online. Comparison panes will use the latest thread data.',
+        severity: 'success',
+        durationMs: 3000,
+      });
+      resetWasOffline();
+    }
+    wasOnlineRef.current = isOnline;
+  }, [isOnline, wasOffline, addToast, resetWasOffline]);
 
   if (!state.isOpen) return null;
 

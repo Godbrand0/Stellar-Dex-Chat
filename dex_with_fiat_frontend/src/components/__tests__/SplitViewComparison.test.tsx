@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ChatSession, ChatMessage } from '@/types';
 import { UseSplitViewReturn, SplitViewState } from '@/hooks/useSplitView';
 import SplitViewComparison from '@/components/SplitViewComparison';
@@ -8,6 +8,19 @@ import SplitViewComparison from '@/components/SplitViewComparison';
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
+
+const { splitViewAddToastMock } = vi.hoisted(() => ({
+  splitViewAddToastMock: vi.fn(),
+}));
+
+vi.mock('@/hooks/useToast', () => ({
+  useToast: () => ({
+    toasts: [],
+    addToast: splitViewAddToastMock,
+    dismissToast: vi.fn(),
+    clearToasts: vi.fn(),
+  }),
+}));
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -179,5 +192,52 @@ describe('SplitViewComparison – message selection sync', () => {
     expect(pressedBtn).toBeDefined();
     fireEvent.click(pressedBtn!);
     expect(splitView.selectMessage).toHaveBeenCalledWith(null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Network status toasts (Issue #550)
+// ---------------------------------------------------------------------------
+
+describe('SplitViewComparison – network status toasts', () => {
+  afterEach(() => {
+    cleanup();
+    splitViewAddToastMock.mockClear();
+  });
+
+  it('shows a warning toast when the browser goes offline while open', async () => {
+    const splitView = makeSplitView();
+    render(<SplitViewComparison splitView={splitView} sessions={allSessions} />);
+
+    fireEvent(window, new Event('offline'));
+
+    await waitFor(() => {
+      expect(splitViewAddToastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          severity: 'warning',
+          message: expect.stringMatching(/offline/i),
+        }),
+      );
+    });
+  });
+
+  it('shows a success toast when coming back online after offline', async () => {
+    const splitView = makeSplitView();
+    render(<SplitViewComparison splitView={splitView} sessions={allSessions} />);
+
+    fireEvent(window, new Event('offline'));
+    await waitFor(() => expect(splitViewAddToastMock).toHaveBeenCalled());
+
+    splitViewAddToastMock.mockClear();
+    fireEvent(window, new Event('online'));
+
+    await waitFor(() => {
+      expect(splitViewAddToastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          severity: 'success',
+          message: expect.stringMatching(/online|reconnect/i),
+        }),
+      );
+    });
   });
 });
