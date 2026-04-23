@@ -34,15 +34,15 @@ vi.mock('next/link', () => ({
   }) => <a href={href}>{children}</a>,
 }));
 
-global.fetch = vi.fn();
+global.fetch = vi.fn() as unknown as typeof fetch;
 
 describe('AdminDashboard - Dark Mode Support', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (global.fetch as any).mockResolvedValue({
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: async () => [],
-    });
+    } as Response);
   });
 
   it('renders with theme-aware classes', async () => {
