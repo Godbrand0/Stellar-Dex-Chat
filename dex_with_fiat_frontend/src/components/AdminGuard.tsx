@@ -15,14 +15,27 @@ interface AdminGuardProps {
 /**
  * High-order component to guard admin routes.
  * 
- * Architecture:
- * 1. Checks if a wallet is connected.
- * 2. Fetches the authorized admin address directly from the on-chain smart contract via `getAdmin()`.
- * 3. Compares the connected wallet address against the on-chain admin address.
- * 4. Grants access to `children` only if there's a strict match, otherwise redirects to `LandingPage`.
+ * @param children - The components to render if authentication passes.
  * 
- * This ensures that admin privileges are tightly coupled to the blockchain state,
- * preventing front-end spoofing of the admin role.
+ * @example
+ * ```tsx
+ * <AdminGuard>
+ *   <AdminDashboard />
+ * </AdminGuard>
+ * ```
+ * 
+ * Architecture:
+ * 1. **Session Check**: Verifies if a Stellar wallet is currently connected via `useStellarWallet`.
+ * 2. **Blockchain Veracity**: Fetches the authorized admin address directly from the on-chain smart contract 
+ *    using the `getAdmin()` helper. This bypasses local storage or session variables that could be tampered with.
+ * 3. **Identity Comparison**: Compares the connected `G...` address against the contract's reported admin.
+ * 4. **Conditional Rendering**: 
+ *    - If match: Renders `children`.
+ *    - If mismatch or no wallet: Redirects to `LandingPage`.
+ *    - If error: Displays a recovery UI with "Try Again" option.
+ * 
+ * This implementation ensures that administrative privileges are strictly tied to the on-chain state,
+ * providing a robust security layer against front-end spoofing.
  */
 export default function AdminGuard({ children }: AdminGuardProps) {
   const { connection } = useStellarWallet();

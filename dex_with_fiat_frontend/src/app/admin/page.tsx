@@ -518,9 +518,40 @@ export default function AdminDashboard() {
               >
                 Previous
               </button>
-              <span className="text-sm text-gray-600 dark:text-gray-300">
+
+              <div className="flex items-center gap-1 hidden sm:flex">
+                {Array.from({ length: Math.min(5, auditTotalPages) }).map((_, i) => {
+                  let pageNum = i + 1;
+                  if (auditTotalPages > 5) {
+                    if (auditPage > 3) {
+                      pageNum = auditPage - 2 + i;
+                    }
+                    if (pageNum + (4 - i) > auditTotalPages) {
+                      pageNum = auditTotalPages - 4 + i;
+                    }
+                  }
+                  if (pageNum > auditTotalPages || pageNum < 1) return null;
+
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setAuditPage(pageNum)}
+                      className={`w-9 h-9 flex items-center justify-center text-sm rounded-md font-medium transition-colors ${
+                        auditPage === pageNum
+                          ? 'bg-blue-600 text-white'
+                          : 'border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <span className="text-sm text-gray-600 dark:text-gray-300 sm:hidden">
                 Page {auditPage} of {auditTotalPages}
               </span>
+
               <button
                 type="button"
                 onClick={() =>

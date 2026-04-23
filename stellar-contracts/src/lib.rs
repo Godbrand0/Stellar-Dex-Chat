@@ -1571,6 +1571,10 @@ impl FiatBridge {
             .set(&DataKey::WithdrawQueueHead, &Option::<u64>::None);
     }
 
+    /// Updates the total liability limit for a specific token.
+    /// 
+    /// This function can only be called by the current contract administrator.
+    /// It ensures that the bridge does not exceed its risk capacity for the given asset.
     pub fn set_limit(env: Env, token: Address, limit: i128) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -1724,6 +1728,10 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Halts all deposit and withdrawal operations in the contract.
+    /// 
+    /// Can only be invoked by the Admin. Useful during emergency situations
+    /// or scheduled maintenance to protect user funds and contract integrity.
     pub fn pause(env: Env) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -1736,6 +1744,10 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Resumes contract operations after a pause.
+    /// 
+    /// Can only be invoked by the Admin. Restores full functionality to
+    /// deposits and withdrawals.
     pub fn unpause(env: Env) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -1761,6 +1773,13 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Initiates a transfer of the administrative role to a new address.
+    /// 
+    /// Follows a two-step transfer pattern:
+    /// 1. Current admin calls `transfer_admin(new_address)`.
+    /// 2. `new_address` must call `accept_admin()` to complete the transfer.
+    /// 
+    /// This prevents accidental lockouts if the wrong address is provided.
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -1777,6 +1796,10 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Finalizes the administrative transfer process.
+    /// 
+    /// Must be called by the `pending_admin` address set in a previous 
+    /// `transfer_admin` call.
     pub fn accept_admin(env: Env) -> Result<(), Error> {
         let pending: Address = env
             .storage()
@@ -2027,6 +2050,11 @@ impl FiatBridge {
     }
 
     // ── Operator Role & Heartbeat ───────────────────────────────────────
+    /// Grants or revokes the Operator role for a specific address.
+    /// 
+    /// Operators are restricted roles that can perform low-stakes actions like 
+    /// heartbeats but cannot change core contract parameters. 
+    /// Admin-only function.
     pub fn set_operator(env: Env, operator: Address, active: bool) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -2087,6 +2115,10 @@ impl FiatBridge {
     }
 
     // ── Denylist ──────────────────────────────────────────────────────────
+    /// Adds an address to the global denylist.
+    /// 
+    /// Denied addresses are blocked from making deposits. 
+    /// Admin-only function for regulatory compliance and security.
     pub fn deny_address(env: Env, address: Address) -> Result<(), Error> {
         let admin: Address = env
             .storage()

@@ -79,6 +79,15 @@ export default function PriceTicker({
     };
   }, [fetchPrices, refreshInterval]);
 
+  const [currentPage, setCurrentPage] = useState(0);
+  const itemsPerPage = 5;
+
+  const totalPages = Math.ceil(symbols.length / itemsPerPage);
+  const paginatedSymbols = symbols.slice(
+    currentPage * itemsPerPage,
+    (currentPage + 1) * itemsPerPage,
+  );
+
   // Show error state
   if (isLoading && Object.keys(prices).length === 0) {
     return (
@@ -116,7 +125,7 @@ export default function PriceTicker({
       </div>
 
       <div className="space-y-2">
-        {symbols.map((symbol) => {
+        {paginatedSymbols.map((symbol) => {
           const priceData = prices[symbol];
           
           if (!priceData) {
@@ -165,6 +174,32 @@ export default function PriceTicker({
           );
         })}
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+          <button
+            onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+            disabled={currentPage === 0}
+            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded disabled:opacity-30"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span className="text-[10px] theme-text-secondary font-medium">
+            {currentPage + 1} / {totalPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
+            disabled={currentPage === totalPages - 1}
+            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded disabled:opacity-30"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {error && Object.keys(prices).length > 0 && (
         <p className="theme-text-secondary text-[10px] mt-2 text-center opacity-60">
