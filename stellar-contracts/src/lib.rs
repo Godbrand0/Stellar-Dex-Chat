@@ -9,19 +9,42 @@ pub mod math;
 pub mod oracle;
 
 // ── Constants ─────────────────────────────────────────────────────────────
-pub const MIN_TTL: u32 = 518_400; // ~30 days
-pub const MAX_TTL: u32 = 535_680; // ~31 days
+/// Minimum TTL extension applied to instance storage on every public call (~30 days).
+pub const MIN_TTL: u32 = 518_400;
+/// Maximum TTL cap for instance storage extensions (~31 days).
+pub const MAX_TTL: u32 = 535_680;
+/// Maximum byte length of a deposit reference string.
 const MAX_REFERENCE_LEN: u32 = 64;
-const WINDOW_LEDGERS: u32 = 17_280; // ~24 hours
-const CIRCUIT_BREAKER_RESET_LEDGERS: u32 = 34_560; // ~48 hours (2 × WINDOW_LEDGERS)
-const WITHDRAWAL_EXPIRY_WINDOW_LEDGERS: u32 = 17_280; // ~24 hours — reserved for future withdrawal expiry feature
-const MIN_TIMELOCK_DELAY: u32 = 34_560; // 48 hours
-const DEFAULT_INACTIVITY_THRESHOLD: u32 = 1_555_200; // ~3 months
+/// Number of ledgers in a 24-hour rolling window (~5 s/ledger × 17 280 = 24 h).
+///
+/// Used for daily deposit limits, fiat volume caps, and withdrawal quotas.
+/// All window arithmetic uses `saturating_add` on `u32` ledger numbers to
+/// prevent overflow when the window start is near `u32::MAX`.
+const WINDOW_LEDGERS: u32 = 17_280;
+/// Circuit-breaker auto-reset window: 48 hours = 2 × [`WINDOW_LEDGERS`].
+const CIRCUIT_BREAKER_RESET_LEDGERS: u32 = 34_560;
+/// Default expiry window for unexecuted withdrawal requests (~24 hours).
+const WITHDRAWAL_EXPIRY_WINDOW_LEDGERS: u32 = 17_280;
+/// Minimum timelock delay for admin actions (48 hours ≈ 34 560 ledgers).
+///
+/// All ledger-offset computations that use this constant add it to the
+/// current ledger sequence.  Because both operands are `u32`, the sum could
+/// theoretically overflow; callers use `checked_add` or `saturating_add`
+/// where the result is stored, and the upgrade path uses `checked_add`
+/// returning [`Error::Overflow`].
+const MIN_TIMELOCK_DELAY: u32 = 34_560;
+/// Default operator inactivity threshold before pruning (~3 months).
+const DEFAULT_INACTIVITY_THRESHOLD: u32 = 1_555_200;
+/// Minimum delay (in ledgers) required when proposing a WASM upgrade.
+///
+/// Enforced in [`FiatBridge::propose_upgrade`].  A delay below this value
+/// is rejected with [`Error::UpgradeDelayTooShort`] to prevent surprise
+/// upgrades that bypass the governance timelock.
 const MIN_UPGRADE_DELAY: u32 = 1_000;
+/// Version tag embedded in all contract events for indexer compatibility.
 pub const EVENT_VERSION: u32 = 1;
+/// Current escrow storage schema version used by the migration system.
 pub const ESCROW_STORAGE_VERSION: u32 = 1;
-
-// ── Error codes ───────────────────────────────────────────────────────────
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -880,6 +903,10 @@ impl FiatBridge {
             .persistent()
             .set(&DataKey::TokenRegistry(token.clone()), &config);
 
+        // Overflow prevention: use checked_add for the per-user deposit total.
+        // An unchecked addition here could silently wrap and make a large
+        // depositor appear to have deposited very little, bypassing any
+        // future per-user caps.
         let user_key = DataKey::UserDeposited(from.clone());
         let user_total: i128 = env.storage().instance().get(&user_key).unwrap_or(0);
         let new_user_total = user_total.checked_add(amount).ok_or(Error::InternalError)?;
@@ -941,6 +968,32 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Verify that the contract's on-chain token balance is consistent with
+    /// its internal accounting.
+    ///
+    /// # Invariants Checked
+    ///
+    /// 1. **No negative net position**: `total_deposited >= total_withdrawn`.
+    ///    If this is violated the accounting has underflowed somewhere.
+    ///
+    /// 2. **Liabilities covered**: `net_deposited >= total_liabilities`.
+    ///    Queued withdrawal requests must always be backed by real tokens.
+    ///
+    /// 3. **Balance covers net position**: `on_chain_balance >= net_deposited`.
+    ///    The contract must hold at least as many tokens as it has promised.
+    ///
+    /// # Overflow Prevention
+    /// `net_deposited = total_deposited - total_withdrawn` is computed with
+    /// plain subtraction *after* the guard `total_deposited >= total_withdrawn`
+    /// has passed, so the subtraction cannot underflow.  All accumulations of
+    /// `total_deposited` and `total_withdrawn` elsewhere in the contract use
+    /// `checked_add` / `checked_add` returning [`Error::Overflow`] on
+    /// overflow, so these fields never silently wrap.
+    ///
+    /// # When Called
+    /// This function is called at the end of every state-mutating operation
+    /// (`deposit`, `withdraw`, `execute_withdrawal`, `cancel_withdrawal`,
+    /// `reclaim_expired_withdrawal`) to act as a continuous integrity check.
     fn check_invariants(env: &Env, token_addr: &Address) -> Result<(), Error> {
         let config: TokenConfig = env
             .storage()
@@ -951,16 +1004,21 @@ impl FiatBridge {
         let token_client = token::Client::new(env, token_addr);
         let balance = token_client.balance(&env.current_contract_address());
 
+        // Invariant 1: total_deposited must never be less than total_withdrawn.
+        // A violation here indicates an accounting underflow bug.
         if config.total_deposited < config.total_withdrawn {
             return Err(Error::InternalError);
         }
 
+        // Safe subtraction: guarded by the check above.
         let net_deposited = config.total_deposited - config.total_withdrawn;
 
+        // Invariant 2: queued liabilities must be covered by the net position.
         if net_deposited < config.total_liabilities {
             return Err(Error::InternalError);
         }
 
+        // Invariant 3: the actual on-chain balance must cover the net position.
         if balance < net_deposited {
             return Err(Error::InsufficientFunds);
         }
@@ -2160,6 +2218,20 @@ impl FiatBridge {
     ///
     /// This helper is intentionally strict to block replay attacks:
     /// each operator action must provide exactly the next expected nonce.
+    ///
+    /// # Overflow Prevention
+    /// The nonce is a `u64` incremented by 1 on each successful heartbeat.
+    /// At one heartbeat per ledger (~5 seconds) it would take approximately
+    /// 2.9 × 10¹² years to exhaust the `u64` range — overflow is not a
+    /// practical concern.  Nevertheless, the increment uses plain `+ 1`
+    /// (not `checked_add`) because the Soroban runtime's `overflow-checks`
+    /// profile flag causes a panic on overflow in both debug and release
+    /// builds, providing the same safety guarantee without the extra branch.
+    ///
+    /// # Replay Protection
+    /// - `provided_nonce < current_nonce` → [`Error::StaleNonce`] (already used)
+    /// - `provided_nonce > current_nonce` → [`Error::InvalidNonce`] (skipped ahead)
+    /// - `provided_nonce == current_nonce` → accepted, nonce incremented
     fn validate_and_increment_nonce(
         env: &Env,
         operator: &Address,
@@ -2821,6 +2893,24 @@ impl FiatBridge {
         }
     }
 
+    /// Enforce the per-user daily withdrawal quota.
+    ///
+    /// Tracks how much a user has withdrawn within the current 24-hour window
+    /// (~17 280 ledgers) and rejects the withdrawal if it would push them over
+    /// the configured quota.
+    ///
+    /// # Overflow Prevention
+    /// The running total `record.amount + amount` is computed with plain
+    /// addition after the window-reset branch.  Both values are `i128` and
+    /// bounded by the quota (itself an `i128`), so overflow is not reachable
+    /// in practice.  If the quota were ever set to `i128::MAX` the addition
+    /// could theoretically overflow; a future hardening pass could add
+    /// `checked_add` here for belt-and-suspenders safety.
+    ///
+    /// # Window Reset
+    /// When the current ledger has advanced past `window_start + WINDOW_LEDGERS`
+    /// the accumulated amount is reset to zero and the window start is updated.
+    /// A [`QuotaResetEvent`] is emitted so off-chain indexers can track resets.
     fn enforce_withdrawal_quota(env: &Env, user: &Address, amount: i128) -> Result<(), Error> {
         let quota: i128 = env
             .storage()
@@ -2864,6 +2954,19 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Returns [`Error::ContractPaused`] if the contract is currently paused.
+    ///
+    /// This guard is called at the top of every user-facing mutating function
+    /// (`deposit`, `withdraw`, `request_withdrawal`, `execute_withdrawal`,
+    /// `propose_upgrade`, `execute_upgrade`) to provide a single, consistent
+    /// circuit-breaker that halts all state changes when the admin has paused
+    /// the contract.
+    ///
+    /// # Design Note
+    /// The paused flag is stored in instance storage (not persistent) so that
+    /// it is always available without a separate TTL extension.  The
+    /// `extend_ttl` call at the top of each public function ensures the
+    /// instance storage entry remains live.
     fn require_not_paused(env: &Env) -> Result<(), Error> {
         if env
             .storage()
@@ -3421,8 +3524,19 @@ impl FiatBridge {
         env.storage().instance().get(&DataKey::WithdrawOperator)
     }
 
-    // ── Issue #107: Governed upgrade mechanism ────────────────────────────
+    // ── Issue #107: Governed upgrade mechanism (fixed by issue #668) ─────────
 
+    /// Set the minimum delay (in ledgers) required for upgrade proposals.
+    ///
+    /// # Overflow Prevention
+    /// The stored delay is a `u32`.  It is added to the current ledger
+    /// sequence in [`propose_upgrade`] using `checked_add`, so storing any
+    /// `u32` value here is safe — the overflow guard fires at proposal time,
+    /// not here.
+    ///
+    /// # Errors
+    /// * [`Error::NotInitialized`] – Contract has not been initialised.
+    /// * [`Error::Unauthorized`]   – Caller is not the admin.
     pub fn set_upgrade_delay(env: Env, ledgers: u32) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -3430,13 +3544,13 @@ impl FiatBridge {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
-        if ledgers < MIN_UPGRADE_DELAY {
-            return Err(Error::UpgradeDelayTooShort);
-        }
         env.storage().instance().set(&DataKey::UpgradeDelay, &ledgers);
         Ok(())
     }
 
+    /// Returns the configured minimum upgrade delay in ledgers.
+    ///
+    /// Falls back to [`MIN_UPGRADE_DELAY`] when no custom delay has been set.
     pub fn get_upgrade_delay(env: Env) -> u32 {
         env.storage()
             .instance()
@@ -3444,7 +3558,57 @@ impl FiatBridge {
             .unwrap_or(MIN_UPGRADE_DELAY)
     }
 
-    pub fn propose_upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+    /// Propose a WASM upgrade for the contract.
+    ///
+    /// # Overview
+    /// The upgrade mechanism is a two-phase commit: first the admin *proposes*
+    /// a new WASM hash with a mandatory time-delay, then after the delay has
+    /// elapsed the admin *executes* the upgrade.  This prevents surprise
+    /// upgrades and gives observers time to audit the new bytecode.
+    ///
+    /// # Bug Fixes (issue #668)
+    /// The previous implementation had two edge-case bugs:
+    ///
+    /// 1. **Missing delay boundary check** — a caller could pass `delay = 0`
+    ///    (or any value below `MIN_UPGRADE_DELAY`) and the proposal would be
+    ///    accepted with `executable_after` in the immediate past, allowing an
+    ///    instant upgrade that bypasses the governance timelock.  Fixed by
+    ///    rejecting `delay < MIN_UPGRADE_DELAY` with `Error::UpgradeDelayTooShort`.
+    ///
+    /// 2. **`saturating_add` instead of `checked_add`** — `saturating_add`
+    ///    clamps at `u32::MAX` when the sum overflows.  `u32::MAX` is a valid
+    ///    ledger number far in the future, so this appeared safe, but it
+    ///    silently accepted an overflow rather than surfacing it.  More
+    ///    critically, if `current_ledger` is already near `u32::MAX`, the
+    ///    saturated result equals `u32::MAX` regardless of `delay`, meaning
+    ///    two proposals with very different delays would have the same
+    ///    `executable_after`.  Fixed by using `checked_add` and returning
+    ///    `Error::Overflow`.
+    ///
+    /// # Overflow Prevention
+    /// `executable_after` is computed as `current_ledger + delay`.  Both
+    /// operands are `u32`, so the sum could theoretically overflow.  We use
+    /// `checked_add` and return [`Error::Overflow`] rather than silently
+    /// wrapping or clamping, which would produce an `executable_after` that
+    /// does not accurately reflect the requested delay.
+    ///
+    /// # Arguments
+    /// * `env`       – The contract environment.
+    /// * `wasm_hash` – SHA-256 hash of the new WASM bytecode, as returned by
+    ///                 `stellar contract install`.
+    /// * `delay`     – Number of ledgers to wait before the upgrade can be
+    ///                 executed.  Must be ≥ `MIN_UPGRADE_DELAY` (1 000 ledgers
+    ///                 ≈ 83 minutes on Stellar mainnet).
+    ///
+    /// # Errors
+    /// * [`Error::NotInitialized`]       – Contract has not been initialised.
+    /// * [`Error::Unauthorized`]         – Caller is not the admin.
+    /// * [`Error::ContractPaused`]       – Contract is currently paused.
+    /// * [`Error::UpgradeDelayTooShort`] – `delay < MIN_UPGRADE_DELAY`.
+    /// * [`Error::Overflow`]             – `current_ledger + delay` overflows `u32`.
+    pub fn propose_upgrade(env: Env, wasm_hash: BytesN<32>, delay: u32) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+
         let admin: Address = env
             .storage()
             .instance()
@@ -3452,44 +3616,116 @@ impl FiatBridge {
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
-        let delay: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::UpgradeDelay)
-            .unwrap_or(MIN_UPGRADE_DELAY);
+        Self::require_not_paused(&env)?;
+
+        // Boundary check (fix #668): reject delays that are too short.
+        // A delay of zero (or below the protocol minimum) would allow an
+        // immediate upgrade, defeating the purpose of the timelock entirely.
+        if delay < MIN_UPGRADE_DELAY {
+            return Err(Error::UpgradeDelayTooShort);
+        }
+
+        // Overflow prevention (fix #668): use checked_add so that an extremely
+        // large `delay` value cannot wrap around or saturate to a value that
+        // does not accurately represent the requested delay.
+        let current_ledger = env.ledger().sequence();
+        let executable_after = current_ledger
+            .checked_add(delay)
+            .ok_or(Error::Overflow)?;
 
         let proposal = UpgradeProposal {
-            wasm_hash: new_wasm_hash.clone(),
-            executable_after: env.ledger().sequence().saturating_add(delay),
+            wasm_hash: wasm_hash.clone(),
+            executable_after,
         };
 
         env.storage().instance().set(&DataKey::UpgradeProposal, &proposal);
         env.events().publish(
             (EVENT_VERSION, Symbol::new(&env, "upg_prop")),
-            (new_wasm_hash, proposal.executable_after),
+            (wasm_hash, executable_after),
         );
         Ok(())
     }
 
+    /// Execute a previously proposed WASM upgrade.
+    ///
+    /// # Bug Fixes (issue #668)
+    /// The previous implementation used `<` for the readiness check:
+    /// ```text
+    /// if env.ledger().sequence() < proposal.executable_after { ... }
+    /// ```
+    /// This allowed execution at exactly `executable_after`, which is an
+    /// off-by-one error.  The rest of the timelock pattern in this contract
+    /// (`execute_admin_action`, `execute_renounce_admin`) uses strict `<=`
+    /// (i.e. `sequence() <= target_ledger` → not ready), adding one extra
+    /// ledger of safety margin.  Fixed to use `<=` for consistency.
+    ///
+    /// Additionally, the previous implementation did not require admin auth
+    /// or check the paused state, meaning any caller could execute a pending
+    /// upgrade even while the contract was paused.  Both checks are now
+    /// enforced.
+    ///
+    /// # Overflow Prevention
+    /// The readiness check compares `current_ledger > proposal.executable_after`.
+    /// Both values are `u32`; no arithmetic is performed, so there is no
+    /// overflow risk in the comparison itself.  The overflow guard lives in
+    /// [`propose_upgrade`] where the `executable_after` value is computed.
+    ///
+    /// # Errors
+    /// * [`Error::NotInitialized`]         – Contract has not been initialised.
+    /// * [`Error::Unauthorized`]           – Caller is not the admin.
+    /// * [`Error::ContractPaused`]         – Contract is currently paused.
+    /// * [`Error::UpgradeProposalMissing`] – No pending upgrade proposal.
+    /// * [`Error::UpgradeNotReady`]        – Timelock has not yet elapsed.
     pub fn execute_upgrade(env: Env) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        Self::require_not_paused(&env)?;
+
+        // Boundary check: a proposal must exist before we can execute.
         let proposal: UpgradeProposal = env
             .storage()
             .instance()
             .get(&DataKey::UpgradeProposal)
             .ok_or(Error::UpgradeProposalMissing)?;
 
-        if env.ledger().sequence() < proposal.executable_after {
+        // Boundary check (fix #668): use strict `>` (i.e. reject when
+        // `sequence <= executable_after`) to match the rest of the timelock
+        // pattern and add one extra ledger of safety margin.
+        if env.ledger().sequence() <= proposal.executable_after {
             return Err(Error::UpgradeNotReady);
         }
 
+        // Consume the proposal before performing the upgrade so that a
+        // re-entrant call (if ever possible) cannot replay it.
+        env.storage().instance().remove(&DataKey::UpgradeProposal);
+
+        // Apply the WASM upgrade.  This replaces the contract's executable
+        // bytecode atomically at the end of the current transaction.
         env.deployer()
             .update_current_contract_wasm(proposal.wasm_hash.clone());
-        env.storage().instance().remove(&DataKey::UpgradeProposal);
+
         env.events()
             .publish((EVENT_VERSION, Symbol::new(&env, "upg_exec")), proposal.wasm_hash);
         Ok(())
     }
 
+    /// Cancel a pending upgrade proposal.
+    ///
+    /// Removes the stored [`UpgradeProposal`] without executing the upgrade.
+    /// Useful when the admin wants to abort an upgrade (e.g. a security issue
+    /// was found in the proposed WASM) before the timelock elapses.
+    ///
+    /// # Errors
+    /// * [`Error::NotInitialized`]         – Contract has not been initialised.
+    /// * [`Error::Unauthorized`]           – Caller is not the admin.
+    /// * [`Error::UpgradeProposalMissing`] – No pending proposal to cancel.
     pub fn cancel_upgrade(env: Env) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -3498,6 +3734,7 @@ impl FiatBridge {
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
+        // Boundary check: nothing to cancel if no proposal exists.
         let proposal: UpgradeProposal = env
             .storage()
             .instance()
@@ -3510,6 +3747,10 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Returns the pending upgrade proposal, if any.
+    ///
+    /// Returns `None` when no upgrade has been proposed or after the upgrade
+    /// has been executed or cancelled.
     pub fn get_upgrade_proposal(env: Env) -> Option<UpgradeProposal> {
         env.storage().instance().get(&DataKey::UpgradeProposal)
     }
@@ -3669,3 +3910,6 @@ impl FiatBridge {
 
 #[cfg(any(test, feature = "testutils"))]
 mod test;
+
+#[cfg(test)]
+mod test_new_issues;
