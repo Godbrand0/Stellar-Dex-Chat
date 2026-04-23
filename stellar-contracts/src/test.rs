@@ -1951,7 +1951,7 @@ fn test_withdraw_fees_success() {
     assert_eq!(bridge.get_accrued_fees(&token_addr), 200);
 
     // Withdraw fees
-    bridge.withdraw_fees(&recipient, &token_addr, &100);
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &0, &0);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 100);
     assert_eq!(token.balance(&recipient), 100);
     assert_eq!(token.balance(&contract_id), 900);
@@ -2020,7 +2020,7 @@ fn test_withdraw_fees_exceeds_accrued() {
     bridge.accrue_fee(&token_addr, &50);
 
     let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &100);
-    assert_eq!(result, Err(Ok(Error::NoFeesToWithdraw)));
+    assert_eq!(result, Err(Ok(Error::FeeWithdrawalExceedsBalance)));
 }
 
 #[test]
@@ -2042,7 +2042,7 @@ fn test_fee_vault_isolation_from_principal() {
     assert_eq!(bridge.get_accrued_fees(&token_addr), 200);
 
     // Withdraw fees does NOT affect total_deposited or total_withdrawn
-    bridge.withdraw_fees(&fee_recipient, &token_addr, &200);
+    bridge.withdraw_fees(&fee_recipient, &token_addr, &200, &0);
     assert_eq!(bridge.get_total_deposited(), 1_000);
     assert_eq!(bridge.get_total_withdrawn(), 0);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 0);
@@ -3270,7 +3270,7 @@ fn test_event_snapshot_fees_withdrawn() {
             .set(&DataKey::FeeVault(token_addr.clone()), &400i128);
     });
 
-    bridge.withdraw_fees(&recipient, &token_addr, &150);
+    bridge.withdraw_fees(&recipient, &token_addr, &150, &0);
 
     assert_eq!(
         env.events().all().filter_by_contract(&contract_id),
@@ -4696,7 +4696,7 @@ fn test_withdraw_fees_edge_case_exact_amount() {
     bridge.accrue_fee(&token_addr, &100);
 
     // Withdraw exactly the accrued amount
-    bridge.withdraw_fees(&recipient, &token_addr, &100);
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
 
     assert_eq!(bridge.get_accrued_fees(&token_addr), 0);
     assert_eq!(token.balance(&recipient), 100);
@@ -4712,7 +4712,7 @@ fn test_withdraw_fees_edge_case_exceeds_accrued() {
     bridge.accrue_fee(&token_addr, &50);
 
     let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &100);
-    assert_eq!(result, Err(Ok(Error::NoFeesToWithdraw)));
+    assert_eq!(result, Err(Ok(Error::FeeWithdrawalExceedsBalance)));
 }
 
 #[test]
@@ -4723,7 +4723,7 @@ fn test_withdraw_fees_edge_case_no_fees_accrued() {
     let (_, bridge, _, token_addr, _, _) = setup_bridge(&env, 1000);
 
     let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &1);
-    assert_eq!(result, Err(Ok(Error::NoFeesToWithdraw)));
+    assert_eq!(result, Err(Ok(Error::FeeWithdrawalExceedsBalance)));
 }
 
 #[test]
@@ -4739,13 +4739,13 @@ fn test_withdraw_fees_edge_case_multiple_withdrawals() {
     bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
     bridge.accrue_fee(&token_addr, &300);
 
-    bridge.withdraw_fees(&recipient, &token_addr, &100);
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 200);
 
-    bridge.withdraw_fees(&recipient, &token_addr, &100);
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 100);
 
-    bridge.withdraw_fees(&recipient, &token_addr, &100);
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 0);
 }
 
@@ -4762,7 +4762,7 @@ fn test_withdraw_fees_edge_case_emits_event() {
     bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
     bridge.accrue_fee(&token_addr, &100);
 
-    bridge.withdraw_fees(&recipient, &token_addr, &50);
+    bridge.withdraw_fees(&recipient, &token_addr, &50, &0);
 
     let events = env.events().all().filter_by_contract(&contract_id);
     let raw = events.events();

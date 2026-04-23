@@ -627,6 +627,8 @@ pub enum DataKey {
     Threshold,
     MultisigProposal(u64),
     NextMultisigID,
+    // ── Issue #695: replay protection for withdraw_fees ──────────────────
+    FeeWithdrawalNonce(Address),
 }
 
 const ORACLE_PRICE_DECIMALS: i128 = 10_000_000;
@@ -1122,6 +1124,36 @@ impl FiatBridge {
             return Err(Error::ZeroAmount);
         }
 
+        // ── Issue #687: edge case validation ─────────────────────────────
+        // Validate token is whitelisted before proceeding
+        let config: TokenConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TokenRegistry(token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+
+        // Check that withdrawal amount doesn't exceed available balance
+        let token_client = token::Client::new(&env, &token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        
+        if amount > contract_balance {
+            return Err(Error::InsufficientFunds);
+        }
+
+        // Validate that adding to liabilities won't cause overflow
+        let new_liabilities = config.total_liabilities.checked_add(amount).ok_or(Error::Overflow)?;
+        
+        // Check that new liabilities don't exceed net deposited amount
+        let net_deposited = config.total_deposited.checked_sub(config.total_withdrawn).ok_or(Error::InternalError)?;
+        if new_liabilities > net_deposited {
+            return Err(Error::InsufficientFunds);
+        }
+
+        // Prevent recipient from being the contract itself
+        if to == env.current_contract_address() {
+            return Err(Error::InvalidRecipient);
+        }
+
         // Denylist
         if env.storage().persistent().has(&DataKey::Denied(to.clone())) {
             return Err(Error::AddressDenied);
@@ -1206,15 +1238,13 @@ impl FiatBridge {
         env.storage()
             .instance()
             .set(&DataKey::TierQueueLen(risk_tier), &(tier_len + 1));
-        let mut config: TokenConfig = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TokenRegistry(token.clone()))
-            .ok_or(Error::TokenNotWhitelisted)?;
-        config.total_liabilities = config.total_liabilities.checked_add(amount).ok_or(Error::InternalError)?;
+        
+        // Update liabilities with validated amount
+        let mut updated_config = config;
+        updated_config.total_liabilities = new_liabilities;
         env.storage()
             .persistent()
-            .set(&DataKey::TokenRegistry(token.clone()), &config);
+            .set(&DataKey::TokenRegistry(token.clone()), &updated_config);
 
         Self::check_invariants(&env, &token)?;
 
@@ -2480,7 +2510,14 @@ impl FiatBridge {
             .unwrap_or(0)
     }
 
-    pub fn withdraw_fees(env: Env, to: Address, token: Address, amount: i128) -> Result<(), Error> {
+    pub fn get_fee_withdrawal_nonce(env: Env, admin: Address) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeWithdrawalNonce(admin))
+            .unwrap_or(0)
+    }
+
+    pub fn withdraw_fees(env: Env, to: Address, token: Address, amount: i128, nonce: u64) -> Result<(), Error> {
         let admin: Address = env
             .storage()
             .instance()
@@ -2492,16 +2529,28 @@ impl FiatBridge {
             return Err(Error::ZeroAmount);
         }
 
+        // ── Issue #695: replay protection ────────────────────────────────
+        let nonce_key = DataKey::FeeWithdrawalNonce(admin.clone());
+        let expected_nonce: u64 = env.storage().persistent().get(&nonce_key).unwrap_or(0);
+        
+        if nonce != expected_nonce {
+            return Err(Error::InvalidNonce);
+        }
+
         let key = DataKey::FeeVault(token.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         if amount > current {
-            return Err(Error::NoFeesToWithdraw);
+            return Err(Error::FeeWithdrawalExceedsBalance);
         }
 
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&env.current_contract_address(), &to, &amount);
 
         env.storage().persistent().set(&key, &(current - amount));
+        
+        // Increment nonce after successful withdrawal
+        env.storage().persistent().set(&nonce_key, &(expected_nonce + 1));
+        
         FeeWithdrawnEvent { version: EVENT_VERSION, to: to.clone(), amount }.publish(&env);
         Ok(())
     }
@@ -3913,3 +3962,7 @@ mod test;
 
 #[cfg(test)]
 mod test_new_issues;
+
+#[cfg(test)]
+mod test_issues_695_687;
+
